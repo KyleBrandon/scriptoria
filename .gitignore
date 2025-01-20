@@ -27,3 +27,5 @@ go.work.sum
 # config file
 config.json
 
+
+download/*

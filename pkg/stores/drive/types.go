@@ -1,8 +1,6 @@
 package drive
 
 import (
-	"net/http"
-
 	"google.golang.org/api/drive/v3"
 )
 
@@ -13,5 +11,5 @@ type Handler struct {
 	credentialsFile string
 
 	driveService *drive.Service
-	client       *http.Client
+	channelID    string
 }

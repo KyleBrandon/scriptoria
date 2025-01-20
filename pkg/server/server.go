@@ -55,7 +55,7 @@ func InitializeServer() error {
 	cfg.mux = http.NewServeMux()
 
 	health.NewHandler(cfg.mux, cfg.LoggerLevel, cfg.Logger)
-	drive.NewHandler(cfg.mux)
+	drive.Initialize(cfg.mux)
 
 	// start the profiler
 	go func() {
@@ -123,6 +123,7 @@ func (sc *ServerConfig) configureLogger() {
 
 	// craete a variable to store the current log level
 	currentLevel := new(slog.LevelVar)
+	slog.Info("log level", "level", cmdLineFlagLogLevel)
 
 	// parse the log level from any passed in command line flag
 	level, err := utils.ParseLogLevel(cmdLineFlagLogLevel)

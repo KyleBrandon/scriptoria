@@ -3,10 +3,12 @@ package drive
 import (
 	"context"
 	"fmt"
-	"log"
+	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,22 +18,23 @@ import (
 	"google.golang.org/api/option"
 )
 
-func NewHandler(mux *http.ServeMux) {
+func Initialize(mux *http.ServeMux) error {
 	h := &Handler{}
 
-	h.initConfig()
+	h.readConfigurationSettings()
 
 	err := h.getDriveService()
 	if err != nil {
-		return
+		return err
 	}
 
-	mux.HandleFunc("POST /webhook", h.webhookHandler)
-	h.subscribeToFolderChanges()
+	h.subscribeToFolderChanges(mux)
+
+	return nil
 }
 
 // Initialize environment variables
-func (h *Handler) initConfig() {
+func (h *Handler) readConfigurationSettings() {
 	h.credentialsFile = os.Getenv("GOOGLE_SERVICE_KEY_FILE")
 	h.watchFolderID = os.Getenv("GOOGLE_WATCH_FOLDER_ID")
 	h.webhookURL = os.Getenv("GOOGLE_WEBHOOK_URL")
@@ -115,38 +118,57 @@ func (h *Handler) pollForChanges() {
 }
 
 // Subscribe to folder changes
-func (h *Handler) subscribeToFolderChanges() {
-	uniqueChannelID := uuid.New().String()
+func (h *Handler) subscribeToFolderChanges(mux *http.ServeMux) error {
+	slog.Debug(">>subscribeToFolderChanges")
+	defer slog.Debug("<<subscribeToFolderChanges")
 
+	// Register the webhook call back
+	u, err := url.Parse(h.webhookURL)
+	if err != err {
+		slog.Error("Failed to parse the GOOGLE_WEBHOOK_URL", "error", err)
+		return err
+	}
+
+	mux.HandleFunc(fmt.Sprintf("POST %s", u.Path), h.webhookHandler)
+
+	// Initialzie the channel to watch.  This will stay active for 24 hours then need to be recreated
+	h.channelID = uuid.New().String()
 	req := &drive.Channel{
-		Id:         uniqueChannelID,
+		Id:         h.channelID,
 		Type:       "web_hook",
 		Address:    h.webhookURL,
 		Expiration: time.Now().Add(24 * time.Hour).UnixMilli(),
 	}
 
 	// Watch for changes in the folder
-	_, err := h.driveService.Files.Watch(h.watchFolderID, req).Do()
+	_, err = h.driveService.Files.Watch(h.watchFolderID, req).Do()
 	if err != nil {
 		slog.Error("Error subscribing to folder changes", "error", err)
-		return
+		return err
 	}
 
-	fmt.Println("✅ Subscribed to folder changes:", h.watchFolderID)
+	return nil
 }
 
 // Webhook handler for receiving Google Drive notifications
 func (h *Handler) webhookHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Println("📌 Google Drive Notification Received!")
-
 	// Extract headers sent by Google Drive
 	resourceState := r.Header.Get("X-Goog-Resource-State")
 	resourceID := r.Header.Get("X-Goog-Resource-ID")
+	channelID := r.Header.Get("X-Goog-Channel-ID")
 
-	fmt.Printf("Resource State: %s, Resource ID: %s\n", resourceState, resourceID)
+	// did we receive a notification for an old channel?
+	if channelID != h.channelID {
+		h.stopChannelWatch(channelID)
+		return
+	}
 
+	slog.Debug("Resource changed", "Channel ID", channelID, "Resource State", resourceState, "Resource ID", resourceID)
+
+	// If we receive a 'sync' notification, ignore it for now.
+	// We could use this for initialzing the state of the vault?
 	if resourceState == "sync" {
-		fmt.Println("✅ Google Drive sync notification received, ignoring.")
+		slog.Debug("Google Drive sync notification received, ignorning")
 		return
 	}
 
@@ -158,38 +180,71 @@ func (h *Handler) webhookHandler(w http.ResponseWriter, r *http.Request) {
 
 // Check for new or modified files in the folder
 func (h *Handler) checkForNewOrModifiedFiles() {
-	query := fmt.Sprintf("'%s' in parents", h.watchFolderID)
+	slog.Debug(">>checkForNewOrModifiedFiles")
+	defer slog.Debug("<<checkForNewOrModifiedFiles")
+
+	query := fmt.Sprintf("mimeType='application/pdf' and '%s' in parents", h.watchFolderID)
 
 	fileList, err := h.driveService.Files.List().Q(query).Fields("files(id, name, modifiedTime)").Do()
 	if err != nil {
-		log.Fatalf("❌ Error fetching files: %v", err)
-	}
-
-	if len(fileList.Files) == 0 {
-		fmt.Println("⚠ No files found.")
+		slog.Error("Failed to fetch files", "error", err)
 		return
 	}
 
-	fmt.Println("📂 New or Modified Files:")
+	if len(fileList.Files) == 0 {
+		slog.Debug("No files found.")
+		return
+	}
+
+	slog.Info("New or Modified Files", "# modified", len(fileList.Files))
 	for _, file := range fileList.Files {
-		fmt.Printf("- %s (ID: %s, Modified: %s)\n", file.Name, file.Id, file.ModifiedTime)
+		slog.Info("Modified File:", "fileName", file.Name, "fileID", file.Id, "modifiedTime", file.ModifiedTime)
+		h.downloadFile(file.Id, file.Name, "/Users/kyle/workspaces/scriptoria/download")
 	}
 }
 
-// Check Google Drive for new or modified PDFs
-func (h *Handler) checkForNewOrModifiedPDFs() {
-	query := "mimeType='application/pdf'"
-	if h.watchFolderID != "" {
-		query += fmt.Sprintf(" and '%s' in parents", h.watchFolderID)
-	}
+// Download a file from Google Drive
+func (h *Handler) downloadFile(fileID, fileName, outputPath string) error {
+	slog.Debug(">>downloadFile")
+	defer slog.Debug("<<downloadFile")
 
-	fileList, err := h.driveService.Files.List().Q(query).Fields("files(id, name, modifiedTime)").Do()
+	// TODO: detect files that can be downloaded
+	// Get the file data
+	resp, err := h.driveService.Files.Get(fileID).Download()
 	if err != nil {
-		log.Fatalf("Error fetching files: %v", err)
+		slog.Error("Unable to download file", "error", err)
+		return err
+
+	}
+	defer resp.Body.Close()
+
+	// Create output file
+	outFile, err := os.Create(filepath.Join(outputPath, fileName))
+	if err != nil {
+		slog.Error("Unable to create local file", "error", err)
+		return err
 	}
 
-	fmt.Println("Checking for new or modified PDFs...")
-	for _, file := range fileList.Files {
-		fmt.Printf("PDF Found: %s (ID: %s, Modified: %s)\n", file.Name, file.Id, file.ModifiedTime)
+	defer outFile.Close()
+
+	// Copy file content to the local file
+	_, err = io.Copy(outFile, resp.Body)
+	if err != nil {
+		slog.Error("Unable to save file", "error", err)
+		return err
 	}
+
+	slog.Debug("File downloaded successfully", "outputPath", outputPath)
+
+	return nil
+}
+
+func (h *Handler) stopChannelWatch(channelID string) {
+	ch := &drive.Channel{
+		Id:         channelID,
+		ResourceId: h.watchFolderID,
+	}
+
+	// Stop watching the channel
+	h.driveService.Channels.Stop(ch).Do()
 }

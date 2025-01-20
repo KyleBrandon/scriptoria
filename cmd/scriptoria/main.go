@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"log/slog"
 	"os"
 
@@ -8,6 +9,7 @@ import (
 )
 
 func main() {
+	flag.Parse()
 	err := server.InitializeServer()
 	if err != nil {
 		slog.Error("failed to initialize the server")
