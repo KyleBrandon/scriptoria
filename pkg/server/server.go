@@ -10,7 +10,8 @@ import (
 	_ "net/http/pprof"
 
 	"github.com/KyleBrandon/scriptoria/internal/config"
-	"github.com/KyleBrandon/scriptoria/pkg/server/service/health"
+	"github.com/KyleBrandon/scriptoria/pkg/server/services/health"
+	"github.com/KyleBrandon/scriptoria/pkg/stores/drive"
 	"github.com/KyleBrandon/scriptoria/pkg/utils"
 	"github.com/joho/godotenv"
 )
@@ -54,6 +55,7 @@ func InitializeServer() error {
 	cfg.mux = http.NewServeMux()
 
 	health.NewHandler(cfg.mux, cfg.LoggerLevel, cfg.Logger)
+	drive.NewHandler(cfg.mux)
 
 	// start the profiler
 	go func() {
@@ -165,7 +167,7 @@ func (config *ServerConfig) runServer() {
 		Handler: config.mux,
 	}
 
-	slog.Debug("Starting server", "port", config.ServerPort)
+	slog.Info("Starting server", "port", config.ServerPort)
 	if err := server.ListenAndServe(); err != nil {
 		slog.Error("Server failed", "error", err)
 	}
