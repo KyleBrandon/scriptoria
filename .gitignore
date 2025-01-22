@@ -29,3 +29,5 @@ config.json
 
 
 download/*
+bin/*
+

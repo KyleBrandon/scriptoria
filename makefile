@@ -7,4 +7,5 @@ test:
 run: build
 	@./bin/scriptoria
 
-
+rund: build
+	@./bin/scriptoria -log_level=debug

@@ -11,7 +11,7 @@ import (
 
 	"github.com/KyleBrandon/scriptoria/internal/config"
 	"github.com/KyleBrandon/scriptoria/pkg/server/services/health"
-	"github.com/KyleBrandon/scriptoria/pkg/stores/drive"
+	"github.com/KyleBrandon/scriptoria/pkg/stores"
 	"github.com/KyleBrandon/scriptoria/pkg/utils"
 	"github.com/joho/godotenv"
 )
@@ -30,6 +30,9 @@ type ServerConfig struct {
 	LogFileLocation    string
 	ConfigFileLocation string
 	OriginPatterns     []string
+
+	SourceStore stores.Store
+	DestStore   stores.Store
 }
 
 // Used by "flag" to read command line argument
@@ -55,13 +58,17 @@ func InitializeServer() error {
 	cfg.mux = http.NewServeMux()
 
 	health.NewHandler(cfg.mux, cfg.LoggerLevel, cfg.Logger)
-	drive.Initialize(cfg.mux)
+	err = cfg.SourceStore.Initialize(cfg.mux)
+	if err != nil {
+		slog.Error("Failed to initialize the source storage", "error", err)
+		os.Exit(1)
+	}
 
 	// start the profiler
 	go func() {
 		err := http.ListenAndServe("localhost:6060", nil)
 		if err != nil {
-			slog.Info("profiling server failed", "error", err)
+			slog.Info("Profiling server failed to start", "error", err)
 		}
 	}()
 
@@ -76,7 +83,7 @@ func initializeServerConfig() (ServerConfig, error) {
 
 	cfg := ServerConfig{}
 
-	// MUST BE FIRST
+	// MUST BE FIRST FOR LOGGER
 	cfg.readEnvironmentVariables()
 
 	// configure slog
@@ -85,11 +92,21 @@ func initializeServerConfig() (ServerConfig, error) {
 	// load the configuration file and environment settings
 	config, err := config.LoadConfigSettings(cfg.ConfigFileLocation)
 	if err != nil {
-		slog.Error("failed to load config file", "error", err)
+		slog.Error("Failed to load config file", "error", err)
 		os.Exit(1)
 	}
 
 	cfg.OriginPatterns = config.OriginPatterns
+
+	cfg.SourceStore, err = stores.BuildStore(config.SourceStore)
+	if err != nil {
+		return ServerConfig{}, err
+	}
+
+	cfg.DestStore, err = stores.BuildStore(config.DestStore)
+	if err != nil {
+		return ServerConfig{}, err
+	}
 
 	return cfg, nil
 }
@@ -101,7 +118,7 @@ func (sc *ServerConfig) readEnvironmentVariables() {
 	// load the environment
 	err := godotenv.Load()
 	if err != nil {
-		slog.Warn("could not load .env file", "error", err)
+		slog.Warn("Could not load .env file", "error", err)
 	}
 
 	sc.ServerPort = os.Getenv("PORT")

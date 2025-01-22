@@ -1,15 +1,18 @@
 package drive
 
 import (
+	"time"
+
 	"google.golang.org/api/drive/v3"
 )
 
-type Handler struct {
+type GoogleDrive struct {
 	//
 	watchFolderID   string
 	webhookURL      string
 	credentialsFile string
 
-	driveService *drive.Service
-	channelID    string
+	driveService   *drive.Service
+	channelID      string
+	lastSearchTime time.Time
 }

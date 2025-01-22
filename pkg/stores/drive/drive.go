@@ -18,32 +18,36 @@ import (
 	"google.golang.org/api/option"
 )
 
-func Initialize(mux *http.ServeMux) error {
-	h := &Handler{}
+func (gd *GoogleDrive) Initialize(mux *http.ServeMux) error {
+	slog.Debug(">>GoogleDrive Initialize")
+	defer slog.Debug("<<GoogleDrive Initialize")
 
-	h.readConfigurationSettings()
+	gd.readConfigurationSettings()
 
-	err := h.getDriveService()
+	err := gd.getDriveService()
 	if err != nil {
 		return err
 	}
 
-	h.subscribeToFolderChanges(mux)
+	gd.subscribeToFolderChanges(mux)
 
 	return nil
 }
 
 // Initialize environment variables
-func (h *Handler) readConfigurationSettings() {
-	h.credentialsFile = os.Getenv("GOOGLE_SERVICE_KEY_FILE")
-	h.watchFolderID = os.Getenv("GOOGLE_WATCH_FOLDER_ID")
-	h.webhookURL = os.Getenv("GOOGLE_WEBHOOK_URL")
+func (gd *GoogleDrive) readConfigurationSettings() {
+	gd.credentialsFile = os.Getenv("GOOGLE_SERVICE_KEY_FILE")
+	gd.watchFolderID = os.Getenv("GOOGLE_WATCH_FOLDER_ID")
+	gd.webhookURL = os.Getenv("GOOGLE_WEBHOOK_URL")
+
+	// At first start, check for files uploaded in the last week
+	gd.lastSearchTime = time.Now().Add(-7 * time.Hour * 24)
 }
 
 // Authenticate using Service Account and return a Drive Service
-func (h *Handler) getDriveService() error {
+func (gd *GoogleDrive) getDriveService() error {
 	// Load service account JSON
-	data, err := os.ReadFile(h.credentialsFile)
+	data, err := os.ReadFile(gd.credentialsFile)
 	if err != nil {
 		slog.Error("Unable to read service account file", "error", err)
 		return err
@@ -66,21 +70,23 @@ func (h *Handler) getDriveService() error {
 		return err
 	}
 
-	h.driveService = service
+	gd.driveService = service
 
 	return nil
 }
 
-func (h *Handler) pollForChanges() {
+// Deprecated
+// pollForChanges uses a polling mechanism with Drive to check for new files and changes
+func (gd *GoogleDrive) pollForChanges() {
 	// Monitor changes in a loop
 	var startPageToken string
-	err := h.getDriveService()
+	err := gd.getDriveService()
 	if err != nil {
 		return
 	}
 
 	// Get startPageToken
-	startTokenResp, err := h.driveService.Changes.GetStartPageToken().Do()
+	startTokenResp, err := gd.driveService.Changes.GetStartPageToken().Do()
 	if err != nil {
 		slog.Error("Error getting start page token", "error", err)
 		return
@@ -91,7 +97,7 @@ func (h *Handler) pollForChanges() {
 	}
 	for {
 
-		changeList, err := h.driveService.Changes.List(startPageToken).Spaces("drive").Do()
+		changeList, err := gd.driveService.Changes.List(startPageToken).Spaces("drive").Do()
 		if err != nil {
 			slog.Error("Error getting changes", "error", err)
 			continue
@@ -118,30 +124,30 @@ func (h *Handler) pollForChanges() {
 }
 
 // Subscribe to folder changes
-func (h *Handler) subscribeToFolderChanges(mux *http.ServeMux) error {
+func (gd *GoogleDrive) subscribeToFolderChanges(mux *http.ServeMux) error {
 	slog.Debug(">>subscribeToFolderChanges")
 	defer slog.Debug("<<subscribeToFolderChanges")
 
 	// Register the webhook call back
-	u, err := url.Parse(h.webhookURL)
+	u, err := url.Parse(gd.webhookURL)
 	if err != err {
 		slog.Error("Failed to parse the GOOGLE_WEBHOOK_URL", "error", err)
 		return err
 	}
 
-	mux.HandleFunc(fmt.Sprintf("POST %s", u.Path), h.webhookHandler)
+	mux.HandleFunc(fmt.Sprintf("POST %s", u.Path), gd.webhookHandler)
 
-	// Initialzie the channel to watch.  This will stay active for 24 hours then need to be recreated
-	h.channelID = uuid.New().String()
+	// Initialzie the channel to watcgd.  This will stay active for 24 hours then need to be recreated
+	gd.channelID = uuid.New().String()
 	req := &drive.Channel{
-		Id:         h.channelID,
+		Id:         gd.channelID,
 		Type:       "web_hook",
-		Address:    h.webhookURL,
+		Address:    gd.webhookURL,
 		Expiration: time.Now().Add(24 * time.Hour).UnixMilli(),
 	}
 
 	// Watch for changes in the folder
-	_, err = h.driveService.Files.Watch(h.watchFolderID, req).Do()
+	_, err = gd.driveService.Files.Watch(gd.watchFolderID, req).Do()
 	if err != nil {
 		slog.Error("Error subscribing to folder changes", "error", err)
 		return err
@@ -151,15 +157,18 @@ func (h *Handler) subscribeToFolderChanges(mux *http.ServeMux) error {
 }
 
 // Webhook handler for receiving Google Drive notifications
-func (h *Handler) webhookHandler(w http.ResponseWriter, r *http.Request) {
+func (gd *GoogleDrive) webhookHandler(w http.ResponseWriter, r *http.Request) {
+	slog.Debug(">>GoogleDrive.webhookHandler")
+	defer slog.Debug("<<GoogleDrive.webhookHandler")
+
 	// Extract headers sent by Google Drive
 	resourceState := r.Header.Get("X-Goog-Resource-State")
 	resourceID := r.Header.Get("X-Goog-Resource-ID")
 	channelID := r.Header.Get("X-Goog-Channel-ID")
 
 	// did we receive a notification for an old channel?
-	if channelID != h.channelID {
-		h.stopChannelWatch(channelID)
+	if channelID != gd.channelID {
+		gd.stopChannelWatch(channelID)
 		return
 	}
 
@@ -173,23 +182,27 @@ func (h *Handler) webhookHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check for new or modified files
-	h.checkForNewOrModifiedFiles()
+	gd.checkForNewOrModifiedFiles()
 
 	w.WriteHeader(http.StatusOK)
 }
 
 // Check for new or modified files in the folder
-func (h *Handler) checkForNewOrModifiedFiles() {
-	slog.Debug(">>checkForNewOrModifiedFiles")
-	defer slog.Debug("<<checkForNewOrModifiedFiles")
+func (gd *GoogleDrive) checkForNewOrModifiedFiles() {
+	slog.Debug(">>GoogleDrive.checkForNewOrModifiedFiles")
+	defer slog.Debug("<<GoogleDrive.checkForNewOrModifiedFiles")
 
-	query := fmt.Sprintf("mimeType='application/pdf' and '%s' in parents", h.watchFolderID)
+	lastCheckTime := gd.lastSearchTime.Format(time.RFC3339)
+	slog.Debug("checking for files that were modified since", "modifiedTime", lastCheckTime)
+	query := fmt.Sprintf("mimeType='application/pdf' and '%s' in parents and modifiedTime > '%s'", gd.watchFolderID, lastCheckTime)
 
-	fileList, err := h.driveService.Files.List().Q(query).Fields("files(id, name, modifiedTime)").Do()
+	fileList, err := gd.driveService.Files.List().Q(query).Fields("files(id, name, modifiedTime)").Do()
 	if err != nil {
 		slog.Error("Failed to fetch files", "error", err)
 		return
 	}
+
+	gd.lastSearchTime = time.Now()
 
 	if len(fileList.Files) == 0 {
 		slog.Debug("No files found.")
@@ -199,18 +212,18 @@ func (h *Handler) checkForNewOrModifiedFiles() {
 	slog.Info("New or Modified Files", "# modified", len(fileList.Files))
 	for _, file := range fileList.Files {
 		slog.Info("Modified File:", "fileName", file.Name, "fileID", file.Id, "modifiedTime", file.ModifiedTime)
-		h.downloadFile(file.Id, file.Name, "/Users/kyle/workspaces/scriptoria/download")
+		gd.downloadFile(file.Id, file.Name, "/Users/kyle/workspaces/scriptoria/download")
 	}
 }
 
 // Download a file from Google Drive
-func (h *Handler) downloadFile(fileID, fileName, outputPath string) error {
+func (gd *GoogleDrive) downloadFile(fileID, fileName, outputPath string) error {
 	slog.Debug(">>downloadFile")
 	defer slog.Debug("<<downloadFile")
 
 	// TODO: detect files that can be downloaded
 	// Get the file data
-	resp, err := h.driveService.Files.Get(fileID).Download()
+	resp, err := gd.driveService.Files.Get(fileID).Download()
 	if err != nil {
 		slog.Error("Unable to download file", "error", err)
 		return err
@@ -239,12 +252,12 @@ func (h *Handler) downloadFile(fileID, fileName, outputPath string) error {
 	return nil
 }
 
-func (h *Handler) stopChannelWatch(channelID string) {
+func (gd *GoogleDrive) stopChannelWatch(channelID string) {
 	ch := &drive.Channel{
 		Id:         channelID,
-		ResourceId: h.watchFolderID,
+		ResourceId: gd.watchFolderID,
 	}
 
 	// Stop watching the channel
-	h.driveService.Channels.Stop(ch).Do()
+	gd.driveService.Channels.Stop(ch).Do()
 }

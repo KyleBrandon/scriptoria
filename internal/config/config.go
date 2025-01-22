@@ -10,6 +10,8 @@ import (
 const DefaultLogLevel = slog.LevelInfo
 
 type Config struct {
+	SourceStore    string   `json:"source_store"`
+	DestStore      string   `json:"dest_store"`
 	OriginPatterns []string `json:"origin_patterns"`
 }
 
