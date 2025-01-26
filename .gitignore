@@ -31,3 +31,4 @@ config.json
 download/*
 bin/*
 
+goose-*.sh

@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+	"database/sql"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -10,10 +12,13 @@ import (
 	_ "net/http/pprof"
 
 	"github.com/KyleBrandon/scriptoria/internal/config"
+	"github.com/KyleBrandon/scriptoria/internal/database"
+	"github.com/KyleBrandon/scriptoria/pkg/document/manager"
+	"github.com/KyleBrandon/scriptoria/pkg/document/storage"
 	"github.com/KyleBrandon/scriptoria/pkg/server/services/health"
-	"github.com/KyleBrandon/scriptoria/pkg/stores"
 	"github.com/KyleBrandon/scriptoria/pkg/utils"
 	"github.com/joho/godotenv"
+	_ "github.com/lib/pq" // Import for side effects (PostgreSQL driver)
 )
 
 const (
@@ -22,17 +27,30 @@ const (
 )
 
 type ServerConfig struct {
-	mux                *http.ServeMux
+	ctx        context.Context
+	cancelFunc context.CancelFunc
+	mux        *http.ServeMux
+
+	// environment settings
+	DatabaseURL        string
 	ServerPort         string
-	Logger             *slog.Logger
-	LoggerLevel        *slog.LevelVar
-	LogFile            *os.File
 	LogFileLocation    string
 	ConfigFileLocation string
-	OriginPatterns     []string
+	Settings           config.Config
 
-	SourceStore stores.Store
-	DestStore   stores.Store
+	// logging information
+	Logger      *slog.Logger
+	LoggerLevel *slog.LevelVar
+	LogFile     *os.File
+
+	// config file settings
+	originPatterns  []string
+	sourceStoreType string
+	destStoreType   string
+
+	queries         *database.Queries
+	DBConnection    *sql.DB
+	documentManager *manager.DocumentManager
 }
 
 // Used by "flag" to read command line argument
@@ -48,24 +66,42 @@ func InitializeServer() error {
 	slog.Debug(">>InitializeServer")
 	defer slog.Debug("<<InitializeServer")
 
+	var err error
+
 	cfg, err := initializeServerConfig()
 	if err != nil {
 		return err
 	}
-
 	defer cfg.LogFile.Close()
 
-	cfg.mux = http.NewServeMux()
+	cfg.openDatabase()
+	defer cfg.DBConnection.Close()
 
-	health.NewHandler(cfg.mux, cfg.LoggerLevel, cfg.Logger)
-	err = cfg.SourceStore.Initialize(cfg.mux)
+	cfg.mux = http.NewServeMux()
+	cfg.ctx, cfg.cancelFunc = context.WithCancel(context.Background())
+
+	source, err := storage.BuildDocumentStorage(cfg.ctx, cfg.sourceStoreType, cfg.queries, cfg.mux)
 	if err != nil {
-		slog.Error("Failed to initialize the source storage", "error", err)
-		os.Exit(1)
 	}
+
+	destination, err := storage.BuildDocumentStorage(cfg.ctx, cfg.destStoreType, cfg.queries, cfg.mux)
+	if err != nil {
+		return err
+	}
+
+	cfg.documentManager, err = manager.InitializeManager(cfg.ctx, cfg.queries, cfg.mux, source, destination)
+	if err != nil {
+		slog.Error("Failed to initialize the document manager", "error", err)
+		return err
+	}
+	cfg.documentManager.StartMonitoring()
+
+	// initialize the health endpoint for the server
+	health.NewHandler(cfg.mux, cfg.LoggerLevel, cfg.Logger)
 
 	// start the profiler
 	go func() {
+		slog.Debug("Start profiling server")
 		err := http.ListenAndServe("localhost:6060", nil)
 		if err != nil {
 			slog.Info("Profiling server failed to start", "error", err)
@@ -96,17 +132,11 @@ func initializeServerConfig() (ServerConfig, error) {
 		os.Exit(1)
 	}
 
-	cfg.OriginPatterns = config.OriginPatterns
+	cfg.Settings = config
 
-	cfg.SourceStore, err = stores.BuildStore(config.SourceStore)
-	if err != nil {
-		return ServerConfig{}, err
-	}
-
-	cfg.DestStore, err = stores.BuildStore(config.DestStore)
-	if err != nil {
-		return ServerConfig{}, err
-	}
+	cfg.originPatterns = config.OriginPatterns
+	cfg.sourceStoreType = config.SourceStore
+	cfg.destStoreType = config.DestStore
 
 	return cfg, nil
 }
@@ -119,6 +149,12 @@ func (sc *ServerConfig) readEnvironmentVariables() {
 	err := godotenv.Load()
 	if err != nil {
 		slog.Warn("Could not load .env file", "error", err)
+	}
+
+	sc.DatabaseURL = os.Getenv("DATABASE_URL")
+	if len(sc.DatabaseURL) == 0 {
+		slog.Error("no database connection string is configured")
+		os.Exit(1)
 	}
 
 	sc.ServerPort = os.Getenv("PORT")
@@ -189,4 +225,16 @@ func (config *ServerConfig) runServer() {
 	if err := server.ListenAndServe(); err != nil {
 		slog.Error("Server failed", "error", err)
 	}
+
+	config.documentManager.CancelAndWait()
+}
+
+func (config *ServerConfig) openDatabase() {
+	db, err := sql.Open("postgres", config.DatabaseURL)
+	if err != nil {
+		slog.Error("failed to open database connection", "error", err)
+	}
+
+	config.DBConnection = db
+	config.queries = database.New(db)
 }
