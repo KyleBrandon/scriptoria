@@ -45,6 +45,31 @@ func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) 
 	return i, err
 }
 
+const findDocumentBySourceId = `-- name: FindDocumentBySourceId :one
+SELECT id, created_at, updated_at, source_store, source_id, source_name, destination_store, destination_id, destination_name, transferred_at, processed_at, processing_status FROM documents
+WHERE source_id = $1
+`
+
+func (q *Queries) FindDocumentBySourceId(ctx context.Context, sourceID string) (Document, error) {
+	row := q.db.QueryRowContext(ctx, findDocumentBySourceId, sourceID)
+	var i Document
+	err := row.Scan(
+		&i.ID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.SourceStore,
+		&i.SourceID,
+		&i.SourceName,
+		&i.DestinationStore,
+		&i.DestinationID,
+		&i.DestinationName,
+		&i.TransferredAt,
+		&i.ProcessedAt,
+		&i.ProcessingStatus,
+	)
+	return i, err
+}
+
 const getDocumentById = `-- name: GetDocumentById :one
 SELECT id, created_at, updated_at, source_store, source_id, source_name, destination_store, destination_id, destination_name, transferred_at, processed_at, processing_status FROM documents
 WHERE id = $1

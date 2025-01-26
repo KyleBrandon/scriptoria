@@ -13,6 +13,7 @@ type (
 	DocumentManagerStore interface {
 		CreateDocument(ctx context.Context, arg database.CreateDocumentParams) (database.Document, error)
 		GetDocumentById(ctx context.Context, id uuid.UUID) (database.Document, error)
+		FindDocumentBySourceId(ctx context.Context, sourceID string) (database.Document, error)
 		UpdateDocumentDestination(ctx context.Context, arg database.UpdateDocumentDestinationParams) (database.Document, error)
 		UpdateDocumentProcessed(ctx context.Context, arg database.UpdateDocumentProcessedParams) (database.Document, error)
 	}
@@ -28,5 +29,7 @@ type (
 		destType    string
 		source      document.DocumentStorage
 		destination document.DocumentStorage
+
+		documents chan document.Document
 	}
 )

@@ -1,16 +1,24 @@
 package local
 
-import "context"
+import (
+	"context"
 
-func NewStorage(ctx context.Context, store LocalDriveStore) *LocalDocumentStorage {
-	drive := &LocalDocumentStorage{}
+	"github.com/KyleBrandon/scriptoria/pkg/document"
+)
 
-	drive.ctx = ctx
+func New(store LocalDriveStore) *LocalStorageContext {
+	drive := &LocalStorageContext{}
+
 	drive.store = store
 
 	return drive
 }
 
-func (ld *LocalDocumentStorage) Initialize() error {
+func (ld *LocalStorageContext) Initialize(ctx context.Context, documents chan document.Document) error {
+	ld.ctx = ctx
+	return nil
+}
+
+func (ld *LocalStorageContext) StartWatching() error {
 	return nil
 }

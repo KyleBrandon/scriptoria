@@ -2,6 +2,7 @@ package gdrive
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -20,20 +21,25 @@ import (
 	"google.golang.org/api/option"
 )
 
-func NewStorage(ctx context.Context, store GoogleDriveStore, mux *http.ServeMux) *GoogleDriveStorage {
-	drive := &GoogleDriveStorage{}
+// Create a new Google Drive storage context
+func New(store GoogleDriveStore, mux *http.ServeMux) *GDriveStorageContext {
+	drive := &GDriveStorageContext{}
 
-	drive.ctx = ctx
 	drive.store = store
 	drive.mux = mux
 
 	return drive
 }
 
-func (gd *GoogleDriveStorage) Initialize() error {
+// Initialize the Google Drive storage watcher
+func (gd *GDriveStorageContext) Initialize(ctx context.Context, documents chan document.Document) error {
 	slog.Debug(">>GoogleDrive Initialize")
 	defer slog.Debug("<<GoogleDrive Initialize")
 
+	// save the channel to send documents to
+	gd.documents = documents
+
+	gd.ctx = ctx
 	err := gd.readConfigurationSettings()
 	if err != nil {
 		return err
@@ -44,8 +50,13 @@ func (gd *GoogleDriveStorage) Initialize() error {
 		return err
 	}
 
+	return nil
+}
+
+// StartWatching for files in the Google Drive folder
+func (gd *GDriveStorageContext) StartWatching() error {
 	// register the webhook for Google Drive
-	err = gd.registerWebhook()
+	err := gd.registerWebhook()
 	if err != nil {
 		return err
 	}
@@ -57,24 +68,34 @@ func (gd *GoogleDriveStorage) Initialize() error {
 		return err
 	}
 
-	return nil
-}
+	// Do an initial query of the files that are in the folder
+	go gd.QueryFiles()
 
-func (gd *GoogleDriveStorage) WatchForFiles(docs chan<- document.Document) error {
 	return nil
 }
 
 // Initialize environment variables
-func (gd *GoogleDriveStorage) readConfigurationSettings() error {
+func (gd *GDriveStorageContext) readConfigurationSettings() error {
 	gd.credentialsFile = os.Getenv("GOOGLE_SERVICE_KEY_FILE")
+	if len(gd.credentialsFile) == 0 {
+		return errors.New("environment variable GOOGLE_SERVICE_KEY_FILE is not present")
+	}
+
 	gd.watchFolderID = os.Getenv("GOOGLE_WATCH_FOLDER_ID")
+	if len(gd.watchFolderID) == 0 {
+		return errors.New("environment variable GOOGLE_WATCH_FOLDER_ID is not present")
+	}
+
 	gd.webhookURL = os.Getenv("GOOGLE_WEBHOOK_URL")
+	if len(gd.webhookURL) == 0 {
+		return errors.New("environment variable GOOGLE_WEBHOOK_URL is not present")
+	}
 
 	return nil
 }
 
 // Authenticate using Service Account and return a Drive Service
-func (gd *GoogleDriveStorage) getDriveService() error {
+func (gd *GDriveStorageContext) getDriveService() error {
 	// Load service account JSON
 	data, err := os.ReadFile(gd.credentialsFile)
 	if err != nil {
@@ -105,7 +126,7 @@ func (gd *GoogleDriveStorage) getDriveService() error {
 }
 
 // Subscribe to folder changes
-func (gd *GoogleDriveStorage) registerWebhook() error {
+func (gd *GDriveStorageContext) registerWebhook() error {
 	slog.Debug(">>registerWebhook")
 	defer slog.Debug("<<registerWebhook")
 
@@ -121,7 +142,7 @@ func (gd *GoogleDriveStorage) registerWebhook() error {
 	return nil
 }
 
-func (gd *GoogleDriveStorage) createWatchChannel() error {
+func (gd *GDriveStorageContext) createWatchChannel() error {
 	var createChannel bool
 	// read the database for the last watch channel created
 	watch, err := gd.store.GetLatestGoogleDriveWatch(gd.ctx)
@@ -180,7 +201,7 @@ func (gd *GoogleDriveStorage) createWatchChannel() error {
 }
 
 // Webhook handler for receiving Google Drive notifications
-func (gd *GoogleDriveStorage) webhookHandler(w http.ResponseWriter, r *http.Request) {
+func (gd *GDriveStorageContext) webhookHandler(w http.ResponseWriter, r *http.Request) {
 	slog.Debug(">>GoogleDrive.webhookHandler")
 	defer slog.Debug("<<GoogleDrive.webhookHandler")
 
@@ -197,15 +218,13 @@ func (gd *GoogleDriveStorage) webhookHandler(w http.ResponseWriter, r *http.Requ
 
 	// If we receive a 'sync' notification, ignore it for now.
 	// We could use this for initialzing the state of the vault?
-	if resourceState == "sync" {
-		slog.Debug("Google Drive sync notification received, ignorning")
+	if resourceState != "add" {
+		slog.Debug("Webhook received non-add resource state", "channelID", channelID, "resourceID", resourceID, "resourceState", resourceState)
 		return
 	}
 
-	// TODO: Setup Go Routine to process file change notifications
-
 	// Check for new or modified files
-	gd.checkForNewOrModifiedFiles(resourceState)
+	gd.QueryFiles()
 
 	// check if the watch channel should be renewed
 	gd.renewWatchChannelIfNeeded()
@@ -213,19 +232,18 @@ func (gd *GoogleDriveStorage) webhookHandler(w http.ResponseWriter, r *http.Requ
 	w.WriteHeader(http.StatusOK)
 }
 
-func (gd *GoogleDriveStorage) renewWatchChannelIfNeeded() {
+func (gd *GDriveStorageContext) renewWatchChannelIfNeeded() {
 	if time.Now().UnixMilli() > gd.expiration-60000 { // Renew 1 min before expiry
 		gd.createWatchChannel() // Recreate the watch
 	}
 }
 
-// Check for new or modified files in the folder
-func (gd *GoogleDriveStorage) checkForNewOrModifiedFiles(resourceState string) {
+func (gd *GDriveStorageContext) QueryFiles() {
 	slog.Debug(">>GoogleDrive.checkForNewOrModifiedFiles")
 	defer slog.Debug("<<GoogleDrive.checkForNewOrModifiedFiles")
 
 	// build the query string to find the new fines in Google Drive
-	query := buildFileSearchQuery(gd.watchFolderID, gd.lastSearchTime)
+	query := gd.buildFileSearchQuery()
 
 	fileList, err := gd.driveService.Files.List().Q(query).Fields("files(id, name, createdTime, modifiedTime)").Do()
 	if err != nil {
@@ -233,32 +251,45 @@ func (gd *GoogleDriveStorage) checkForNewOrModifiedFiles(resourceState string) {
 		return
 	}
 
-	gd.lastSearchTime = time.Now()
-
 	if len(fileList.Files) == 0 {
 		slog.Debug("No files found.")
 		return
 	}
 
-	slog.Info("State change", "resourceState", resourceState, "#files", len(fileList.Files))
+	slog.Debug("GDriveStorage process file list", "file Count", len(fileList.Files))
 	for _, file := range fileList.Files {
-		slog.Info("Modified File:", "fileName", file.Name, "driveID", file.DriveId, "fileID", file.Id, "createdTime", file.CreatedTime, "modifiedTime", file.ModifiedTime)
-		gd.downloadFile(file.Id, file.Name, "/Users/kyle/workspaces/scriptoria/download")
+		slog.Debug("File:", "fileName", file.Name, "driveID", file.DriveId, "fileID", file.Id, "createdTime", file.CreatedTime, "modifiedTime", file.ModifiedTime)
+
+		createdTime, err := time.Parse(time.RFC3339, file.CreatedTime)
+		if err != nil {
+			slog.Warn("Failed to parse the created time for the file", "fileID", file.Id, "fileName", file.Name, "createdTime", file.CreatedTime, "error", err)
+		}
+
+		modifiedTime, err := time.Parse(time.RFC3339, file.ModifiedTime)
+		if err != nil {
+			slog.Warn("Failed to parse the modified time for the file", "fileID", file.Id, "fileName", file.Name, "modifiedTime", file.ModifiedTime, "error", err)
+		}
+
+		document := document.Document{
+			ID:           file.Id,
+			Name:         file.Name,
+			CreatedTime:  createdTime,
+			ModifiedTime: modifiedTime,
+		}
+
+		gd.documents <- document
+		// gd.downloadFile(file.Id, file.Name, "/Users/kyle/workspaces/scriptoria/download")
 	}
 }
 
-func buildFileSearchQuery(resource string, lastSearchTime time.Time) string {
-	query := fmt.Sprintf("mimeType='application/pdf' and '%s' in parents ", resource)
-	if !lastSearchTime.IsZero() {
-		lastCheckTime := lastSearchTime.Format(time.RFC3339)
-		query = fmt.Sprintf("%s and createdTime > '%s'", query, lastCheckTime)
-	}
+func (gd *GDriveStorageContext) buildFileSearchQuery() string {
+	query := fmt.Sprintf("mimeType='application/pdf' and '%s' in parents", gd.watchFolderID)
 
 	return query
 }
 
 // Download a file from Google Drive
-func (gd *GoogleDriveStorage) downloadFile(fileID, fileName, outputPath string) error {
+func (gd *GDriveStorageContext) downloadFile(fileID, fileName, outputPath string) error {
 	slog.Debug(">>downloadFile")
 	defer slog.Debug("<<downloadFile")
 
@@ -293,7 +324,7 @@ func (gd *GoogleDriveStorage) downloadFile(fileID, fileName, outputPath string) 
 	return nil
 }
 
-func (gd *GoogleDriveStorage) stopChannelWatch(channelID, resourceID string) {
+func (gd *GDriveStorageContext) stopChannelWatch(channelID, resourceID string) {
 	ch := &drive.Channel{
 		Id:         channelID,
 		ResourceId: resourceID,

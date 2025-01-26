@@ -3,27 +3,27 @@ package gdrive
 import (
 	"context"
 	"net/http"
-	"time"
 
 	"github.com/KyleBrandon/scriptoria/internal/database"
+	"github.com/KyleBrandon/scriptoria/pkg/document"
 	"google.golang.org/api/drive/v3"
 )
 
-type GoogleDriveStorage struct {
+type GDriveStorageContext struct {
 	ctx   context.Context
 	store GoogleDriveStore
 	mux   *http.ServeMux
 
-	// TODO: move these to the configuration file
 	// environment settings
 	watchFolderID   string
 	webhookURL      string
 	credentialsFile string
 	expiration      int64
 
-	driveService   *drive.Service
-	channelID      string
-	lastSearchTime time.Time
+	driveService *drive.Service
+	channelID    string
+
+	documents chan document.Document
 }
 
 type GoogleDriveStore interface {

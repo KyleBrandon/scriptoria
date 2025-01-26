@@ -80,21 +80,10 @@ func InitializeServer() error {
 	cfg.mux = http.NewServeMux()
 	cfg.ctx, cfg.cancelFunc = context.WithCancel(context.Background())
 
-	source, err := storage.BuildDocumentStorage(cfg.ctx, cfg.sourceStoreType, cfg.queries, cfg.mux)
-	if err != nil {
-	}
-
-	destination, err := storage.BuildDocumentStorage(cfg.ctx, cfg.destStoreType, cfg.queries, cfg.mux)
+	err = cfg.initializeStorageManager()
 	if err != nil {
 		return err
 	}
-
-	cfg.documentManager, err = manager.InitializeManager(cfg.ctx, cfg.queries, cfg.mux, source, destination)
-	if err != nil {
-		slog.Error("Failed to initialize the document manager", "error", err)
-		return err
-	}
-	cfg.documentManager.StartMonitoring()
 
 	// initialize the health endpoint for the server
 	health.NewHandler(cfg.mux, cfg.LoggerLevel, cfg.Logger)
@@ -109,6 +98,32 @@ func InitializeServer() error {
 	}()
 
 	cfg.runServer()
+
+	return nil
+}
+
+func (cfg *ServerConfig) initializeStorageManager() error {
+	// build the source stoage that we receive Documents from
+	source, err := storage.BuildDocumentStorage(cfg.sourceStoreType, cfg.queries, cfg.mux)
+	if err != nil {
+		slog.Error("Failed to initialize the source storage", "error", err)
+		return err
+	}
+
+	// build the destination stoage that we send Documents to
+	destination, err := storage.BuildDocumentStorage(cfg.destStoreType, cfg.queries, cfg.mux)
+	if err != nil {
+		slog.Error("Failed to initialize the destination storage", "error", err)
+		return err
+	}
+
+	cfg.documentManager, err = manager.New(cfg.ctx, cfg.queries, source, destination)
+	if err != nil {
+		slog.Error("Failed to initialize the document manager", "error", err)
+		return err
+	}
+
+	cfg.documentManager.StartMonitoring()
 
 	return nil
 }

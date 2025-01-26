@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"context"
 	"log/slog"
 	"net/http"
 
@@ -11,22 +10,16 @@ import (
 	"github.com/KyleBrandon/scriptoria/pkg/document/storage/local"
 )
 
-func BuildDocumentStorage(ctx context.Context, storeName string, queries *database.Queries, mux *http.ServeMux) (document.DocumentStorage, error) {
+func BuildDocumentStorage(storeName string, queries *database.Queries, mux *http.ServeMux) (document.DocumentStorage, error) {
 	slog.Debug(">>buildDocumentStorage")
 	defer slog.Debug("<<buildDocumentStorage")
 
 	var storage document.DocumentStorage
 	switch storeName {
 	case "Google Drive":
-		storage = gdrive.NewStorage(ctx, queries, mux)
+		storage = gdrive.New(queries, mux)
 	case "Local":
-		storage = local.NewStorage(ctx, queries)
-	}
-
-	err := storage.Initialize()
-	if err != nil {
-		slog.Error("Failed to initialize the storage", "storeName", storeName, "error", err)
-		return nil, err
+		storage = local.New(queries)
 	}
 
 	return storage, nil
