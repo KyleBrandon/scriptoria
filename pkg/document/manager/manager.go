@@ -88,9 +88,6 @@ func (dm *DocumentManager) processDocument(document document.Document) {
 		return
 	}
 
-	// TODO: process the document in another go routine
-	slog.Info("Processing document", "id", document.ID, "name", document.Name, "createdTime", document.CreatedTime, "modifiedTime", document.ModifiedTime)
-
 	// mark the file as having been processed
 	arg := database.CreateDocumentParams{
 		SourceStore: dm.sourceType,
@@ -100,5 +97,28 @@ func (dm *DocumentManager) processDocument(document document.Document) {
 	_, err = dm.store.CreateDocument(dm.ctx, arg)
 	if err != nil {
 		slog.Error("Failed to update the document proccessing status", "id", dbDoc.ID, "error", err)
+	}
+
+	// TODO: process the document in another go routine
+	slog.Info("Processing document", "id", document.ID, "name", document.Name, "createdTime", document.CreatedTime, "modifiedTime", document.ModifiedTime)
+
+	dm.wg.Add(1)
+	go dm.copyFileFromSource(document)
+}
+
+func (dm *DocumentManager) copyFileFromSource(document document.Document) {
+	defer dm.wg.Done()
+
+	reader, err := dm.source.GetFileReader(document.ID)
+	if err != nil {
+		slog.Error("Failed to get the file reader from the source storage", "sourceID", document.ID, "name", document.Name, "error", err)
+		return
+	}
+	defer reader.Close()
+
+	err = dm.destination.Write(document, reader)
+	if err != nil {
+		slog.Error("Failed to write the file to the destination storage", "sourceID", document.ID, "name", document.Name, "destinationType", dm.destType, "error", err)
+		return
 	}
 }

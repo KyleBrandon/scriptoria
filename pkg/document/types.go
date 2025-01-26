@@ -2,6 +2,7 @@ package document
 
 import (
 	"context"
+	"io"
 	"time"
 )
 
@@ -16,6 +17,8 @@ type (
 	DocumentStorage interface {
 		Initialize(ctx context.Context, documents chan Document) error
 		StartWatching() error
+		GetFileReader(sourceFileID string) (io.ReadCloser, error)
+		Write(document Document, reader io.Reader) error
 	}
 
 	DocumentContext interface {
