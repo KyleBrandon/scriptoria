@@ -119,8 +119,8 @@ func (gd *GDriveStorageContext) QueryFiles() {
 }
 
 // Write the given file to the storage
-func (gd *GDriveStorageContext) Write(document document.Document, reader io.Reader) error {
-	return errors.ErrUnsupported
+func (gd *GDriveStorageContext) Write(srcDoc document.Document, reader io.Reader) (document.Document, error) {
+	return document.Document{}, errors.ErrUnsupported
 }
 
 // Initialize environment variables
@@ -293,9 +293,9 @@ func (gd *GDriveStorageContext) buildFileSearchQuery() string {
 	return query
 }
 
-func (gd *GDriveStorageContext) GetFileReader(sourceFileID string) (io.ReadCloser, error) {
+func (gd *GDriveStorageContext) GetFileReader(document document.Document) (io.ReadCloser, error) {
 	// Get the file data
-	resp, err := gd.driveService.Files.Get(sourceFileID).Download()
+	resp, err := gd.driveService.Files.Get(document.ID).Download()
 	if err != nil {
 		slog.Error("Unable to get the file reader", "error", err)
 		return nil, err

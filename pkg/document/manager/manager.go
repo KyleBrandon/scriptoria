@@ -7,6 +7,7 @@ import (
 
 	"github.com/KyleBrandon/scriptoria/internal/database"
 	"github.com/KyleBrandon/scriptoria/pkg/document"
+	"github.com/KyleBrandon/scriptoria/pkg/document/processor/mathpix"
 )
 
 func New(ctx context.Context, queries *database.Queries, source, destination document.DocumentStorage) (*DocumentManager, error) {
@@ -71,17 +72,17 @@ func (dm *DocumentManager) documentStorageMonitor() {
 
 	dm.source.StartWatching()
 
-	for document := range dm.documents {
+	for srcDoc := range dm.documents {
 		dm.wg.Add(1)
-		go dm.processDocument(document)
+		go dm.processDocument(srcDoc)
 	}
 }
 
-func (dm *DocumentManager) processDocument(document document.Document) {
+func (dm *DocumentManager) processDocument(srcDoc document.Document) {
 	defer dm.wg.Done()
 
 	// check if we've processed this file before
-	dbDoc, err := dm.store.FindDocumentBySourceId(dm.ctx, document.ID)
+	dbDoc, err := dm.store.FindDocumentBySourceId(dm.ctx, srcDoc.ID)
 	if err == nil {
 		// assume we've processed this or it's in process
 		slog.Warn("Document exists", "id", dbDoc.ID, "sourceID", dbDoc.SourceID, "name", dbDoc.SourceName)
@@ -91,8 +92,8 @@ func (dm *DocumentManager) processDocument(document document.Document) {
 	// mark the file as having been processed
 	arg := database.CreateDocumentParams{
 		SourceStore: dm.sourceType,
-		SourceID:    document.ID,
-		SourceName:  document.Name,
+		SourceID:    srcDoc.ID,
+		SourceName:  srcDoc.Name,
 	}
 	_, err = dm.store.CreateDocument(dm.ctx, arg)
 	if err != nil {
@@ -100,25 +101,30 @@ func (dm *DocumentManager) processDocument(document document.Document) {
 	}
 
 	// TODO: process the document in another go routine
-	slog.Info("Processing document", "id", document.ID, "name", document.Name, "createdTime", document.CreatedTime, "modifiedTime", document.ModifiedTime)
+	slog.Info("Processing document", "id", srcDoc.ID, "name", srcDoc.Name, "createdTime", srcDoc.CreatedTime, "modifiedTime", srcDoc.ModifiedTime)
 
 	dm.wg.Add(1)
-	go dm.copyFileFromSource(document)
+	go dm.copyFileFromSource(srcDoc)
 }
 
-func (dm *DocumentManager) copyFileFromSource(document document.Document) {
+func (dm *DocumentManager) copyFileFromSource(srcDoc document.Document) {
 	defer dm.wg.Done()
 
-	reader, err := dm.source.GetFileReader(document.ID)
+	reader, err := dm.source.GetFileReader(srcDoc)
 	if err != nil {
-		slog.Error("Failed to get the file reader from the source storage", "sourceID", document.ID, "name", document.Name, "error", err)
+		slog.Error("Failed to get the file reader from the source storage", "sourceID", srcDoc.ID, "name", srcDoc.Name, "error", err)
 		return
 	}
 	defer reader.Close()
 
-	err = dm.destination.Write(document, reader)
+	destDoc, err := dm.destination.Write(srcDoc, reader)
 	if err != nil {
-		slog.Error("Failed to write the file to the destination storage", "sourceID", document.ID, "name", document.Name, "destinationType", dm.destType, "error", err)
+		slog.Error("Failed to write the file to the destination storage", "sourceID", srcDoc.ID, "name", srcDoc.Name, "destinationType", dm.destType, "error", err)
 		return
 	}
+
+	// TODO: Look at this again, it feels odd
+	dm.wg.Add(1)
+	mp := mathpix.New()
+	go mp.ProcessDocument(destDoc, dm.destination)
 }

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/KyleBrandon/scriptoria/pkg/document"
 )
@@ -21,24 +22,43 @@ func New(store LocalDriveStore) *LocalStorageContext {
 
 func (ld *LocalStorageContext) Initialize(ctx context.Context, documents chan document.Document) error {
 	ld.ctx = ctx
+	err := ld.readConfigurationSettings()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (ld *LocalStorageContext) readConfigurationSettings() error {
+	ld.localFilePath = os.Getenv("LOCAL_STORAGE_PATH")
+	if len(ld.localFilePath) == 0 {
+		return errors.New("environment variable LOCAL_STORAGE_PATH is not present")
+	}
+
 	return nil
 }
 
 func (ld *LocalStorageContext) StartWatching() error {
-	return nil
+	return errors.ErrUnsupported
 }
 
-func (ld *LocalStorageContext) GetFileReader(sourceFileID string) (io.ReadCloser, error) {
-	return nil, errors.ErrUnsupported
+func (ld *LocalStorageContext) GetFileReader(document document.Document) (io.ReadCloser, error) {
+	file, err := os.Open(document.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	return file, nil
 }
 
-func (ld *LocalStorageContext) Write(document document.Document, reader io.Reader) error {
-	outputPath := "/Users/kyle/workspaces/scriptoria/download"
+func (ld *LocalStorageContext) Write(srcDoc document.Document, reader io.Reader) (document.Document, error) {
+	filePath := filepath.Join(ld.localFilePath, srcDoc.Name)
+
 	// Create output file
-	outFile, err := os.Create(filepath.Join(outputPath, document.Name))
+	outFile, err := os.Create(filePath)
 	if err != nil {
 		slog.Error("Unable to create local file", "error", err)
-		return err
+		return document.Document{}, err
 	}
 
 	defer outFile.Close()
@@ -47,7 +67,15 @@ func (ld *LocalStorageContext) Write(document document.Document, reader io.Reade
 	_, err = io.Copy(outFile, reader)
 	if err != nil {
 		slog.Error("Unable to save file", "error", err)
-		return err
+		return document.Document{}, err
 	}
-	return nil
+
+	destDoc := document.Document{
+		ID:           filePath,
+		Name:         srcDoc.Name,
+		CreatedTime:  time.Now(),
+		ModifiedTime: time.Now(),
+	}
+
+	return destDoc, nil
 }

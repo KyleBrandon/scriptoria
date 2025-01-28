@@ -17,8 +17,8 @@ type (
 	DocumentStorage interface {
 		Initialize(ctx context.Context, documents chan Document) error
 		StartWatching() error
-		GetFileReader(sourceFileID string) (io.ReadCloser, error)
-		Write(document Document, reader io.Reader) error
+		GetFileReader(document Document) (io.ReadCloser, error)
+		Write(sourceDocument Document, reader io.Reader) (Document, error)
 	}
 
 	DocumentContext interface {

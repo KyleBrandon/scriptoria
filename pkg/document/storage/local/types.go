@@ -11,6 +11,8 @@ type (
 		ctx   context.Context
 		store LocalDriveStore
 
+		localFilePath string
+
 		documents chan document.Document
 	}
 
