@@ -33,3 +33,5 @@ markdown/*
 bin/*
 
 goose-*.sh
+
+.DS_Store

@@ -9,6 +9,7 @@ import (
 
 const DefaultLogLevel = slog.LevelInfo
 
+// TODO: Update so that each storage config can have settings and add Processor configs
 type Config struct {
 	SourceStore    string   `json:"source_store"`
 	DestStore      string   `json:"dest_store"`

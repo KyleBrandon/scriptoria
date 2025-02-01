@@ -2,6 +2,7 @@ package mathpix
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,18 +11,101 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
-	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/KyleBrandon/scriptoria/pkg/document"
 )
 
-func New() *MathpixDocumentProcessor {
+func New(store mathpixDocumentStore) *MathpixDocumentProcessor {
 	mp := &MathpixDocumentProcessor{}
 
-	mp.readConfigurationSettings()
+	mp.store = store
 
 	return mp
+}
+
+// Initialize the Mathpix document processor
+func (mp *MathpixDocumentProcessor) Initialize(ctx context.Context, inputCh chan *document.DocumentTransform) (chan *document.DocumentTransform, error) {
+	slog.Debug(">>MathpixDocumentProcessor.Initialize")
+	defer slog.Debug("<<MathpixDocumentProcessor.Initialize")
+
+	mp.ctx = ctx
+	mp.inputCh = inputCh
+	mp.outputCh = make(chan *document.DocumentTransform)
+
+	err := mp.readConfigurationSettings()
+	if err != nil {
+		return nil, err
+	}
+
+	go mp.process()
+
+	return mp.outputCh, nil
+}
+
+func (mp *MathpixDocumentProcessor) process() {
+	slog.Debug(">>MathpixDocumentProcessor.process")
+	defer slog.Debug("<<MathpixDocumentProcessor.process")
+
+	for {
+		select {
+		case <-mp.ctx.Done():
+			slog.Debug("MathpixDocumentProcessor.process canceled")
+			return
+
+		case t := <-mp.inputCh:
+			slog.Debug("MathMathpixDocumentProcessor.process received document to process")
+			go mp.processDocument(t)
+		}
+	}
+}
+
+func (mp *MathpixDocumentProcessor) processDocument(t *document.DocumentTransform) {
+	slog.Debug(">>MathpixDocumentProcessor.processDocument")
+	defer slog.Debug("<<MathpixDocumentProcessor.processDocument")
+
+	output := document.DocumentTransform{}
+
+	// Upload PDF to Mathpix
+	pdfID, err := mp.sendDocumentToMathpix(t.Doc.Name, t.Reader)
+	if err != nil {
+		slog.Error("Error uploading PDF", "error", err)
+		output.Error = err
+		mp.outputCh <- &output
+		return
+
+	}
+
+	// Poll for results
+	err = mp.pollForResults(pdfID)
+	if err != nil {
+		slog.Error("Error getting results", "error", err)
+		output.Error = err
+		mp.outputCh <- &output
+		return
+	}
+
+	markdownText, err := mp.queryConversionResults(pdfID)
+	if err != nil {
+		slog.Error("Failed to query conversion results", "error", err)
+		output.Error = err
+		mp.outputCh <- &output
+		return
+	}
+
+	name := t.Doc.GetDocumentName() + ".mmd"
+
+	// create an output document that represents the multi-markdown file
+	output.Doc = &document.Document{
+		Name:         name,
+		MimeType:     "text/markdown",
+		CreatedTime:  time.Now(),
+		ModifiedTime: time.Now(),
+	}
+
+	output.Reader = io.NopCloser(strings.NewReader(markdownText))
+	mp.outputCh <- &output
 }
 
 // Initialize environment variables
@@ -44,57 +128,21 @@ func (mp *MathpixDocumentProcessor) readConfigurationSettings() error {
 	return nil
 }
 
-func (mp *MathpixDocumentProcessor) ProcessDocument(doc document.Document, documentStorage document.DocumentStorage) {
-	slog.Debug(">>ProcessDocument")
-	defer slog.Debug("<<ProcessDocument")
-
-	// Upload PDF to Mathpix
-	pdfID, err := mp.sendDocumentToMathpix(doc, documentStorage)
-	if err != nil {
-		slog.Error("Error uploading PDF", "error", err)
-		return
-	}
-
-	slog.Debug("Upload successful", "jobId", pdfID)
-
-	// Poll for results
-	err = mp.pollForResults(pdfID)
-	if err != nil {
-		slog.Error("Error getting results", "error", err)
-		return
-	}
-
-	markdownText, err := mp.queryConversionResults(pdfID)
-	if err != nil {
-		slog.Error("Failed to query conversion results", "error", err)
-		return
-	}
-
-	// Save to Markdown file
-	err = mp.saveToMarkdown(doc.Name, markdownText)
-	if err != nil {
-		slog.Error("Error saving markdown file", "error", err)
-		return
-	}
-}
-
 // UploadPDF uploads a PDF file to Mathpix and returns the Job ID
-func (mp *MathpixDocumentProcessor) sendDocumentToMathpix(doc document.Document, documentStorage document.DocumentStorage) (string, error) {
+func (mp *MathpixDocumentProcessor) sendDocumentToMathpix(name string, reader io.Reader) (string, error) {
+	slog.Debug(">>sendDocumentToMathpix")
+	defer slog.Debug("<<sendDocumentToMathpix")
+
 	// Create multipart form data
 	body := &bytes.Buffer{}
 	writer := multipart.NewWriter(body)
-	part, err := writer.CreateFormFile("file", doc.Name)
+	part, err := writer.CreateFormFile("file", name)
 	if err != nil {
 		slog.Error("Failed to create form file", "error", err)
 		return "", err
 	}
 
-	reader, err := documentStorage.GetFileReader(doc)
-	if err != nil {
-		slog.Error("Failed to get the document reader", "error", err)
-		return "", err
-	}
-
+	// copy the document input to the request body
 	_, err = io.Copy(part, reader)
 	if err != nil {
 		slog.Error("Failed to copy file to form part", "error", err)
@@ -109,15 +157,17 @@ func (mp *MathpixDocumentProcessor) sendDocumentToMathpix(doc document.Document,
 		return "", err
 	}
 
-	// Set headers
+	// Set additional headers
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
+	// send the request
 	respBody, err := mp.doRequest(req)
 	if err != nil {
 		slog.Error("Failed to send mathpix request", "error", err)
 		return "", err
 	}
 
+	// Process the response for the PDF id
 	var uploadResp UploadResponse
 	err = json.Unmarshal(respBody, &uploadResp)
 	if err != nil {
@@ -167,12 +217,13 @@ func (mp *MathpixDocumentProcessor) pollForResults(pdfID string) error {
 		}
 
 		// Wait before polling again
-		slog.Debug("Waiting for before polling again...")
 		time.Sleep(MathpixPollInterval * time.Second)
 	}
 }
 
 func (mp *MathpixDocumentProcessor) queryConversionResults(pdfID string) (string, error) {
+	slog.Debug(">>MathpixDocumentProcessor.queryConversionResults")
+	defer slog.Debug("<<MathpixDocumentProcessor.queryConversionResults")
 	resultsURL := fmt.Sprintf("%s/%s.mmd", MathpixPdfApiURL, pdfID)
 
 	req, err := mp.newRequest("GET", resultsURL, nil)
@@ -218,18 +269,4 @@ func (mp *MathpixDocumentProcessor) doRequest(req *http.Request) ([]byte, error)
 	}
 
 	return respBody, nil
-}
-
-// SaveToMarkdown saves the extracted Markdown to a file
-func (mp *MathpixDocumentProcessor) saveToMarkdown(name, content string) error {
-	markdownFilePath := fmt.Sprintf("%s.md", filepath.Join(mp.markdownFileLocation, name))
-
-	file, err := os.Create(markdownFilePath)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	_, err = file.WriteString(content)
-	return err
 }

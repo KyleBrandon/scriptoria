@@ -13,7 +13,7 @@ type (
 
 		localFilePath string
 
-		documents chan document.Document
+		documents chan *document.Document
 	}
 
 	// LocalDriveStore is used to access the database

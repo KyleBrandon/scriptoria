@@ -29,7 +29,8 @@ type (
 		destType    string
 		source      document.DocumentStorage
 		destination document.DocumentStorage
-
-		documents chan document.Document
+		processors  []document.DocumentProcessor
+		inputCh     chan *document.DocumentTransform
+		outputCh    chan *document.DocumentTransform
 	}
 )

@@ -31,12 +31,11 @@ func New(store GoogleDriveStore, mux *http.ServeMux) *GDriveStorageContext {
 }
 
 // Initialize the Google Drive storage watcher
-func (gd *GDriveStorageContext) Initialize(ctx context.Context, documents chan document.Document) error {
+func (gd *GDriveStorageContext) Initialize(ctx context.Context) error {
 	slog.Debug(">>GoogleDrive Initialize")
 	defer slog.Debug("<<GoogleDrive Initialize")
 
-	// save the channel to send documents to
-	gd.documents = documents
+	gd.documents = make(chan *document.Document, 10)
 
 	gd.ctx = ctx
 	err := gd.readConfigurationSettings()
@@ -53,24 +52,24 @@ func (gd *GDriveStorageContext) Initialize(ctx context.Context, documents chan d
 }
 
 // StartWatching for files in the Google Drive folder
-func (gd *GDriveStorageContext) StartWatching() error {
+func (gd *GDriveStorageContext) StartWatching() (chan *document.Document, error) {
 	// register the webhook for Google Drive
 	err := gd.registerWebhook()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Determine if we should renew the watch channel
 	err = gd.createWatchChannel()
 	if err != nil {
 		slog.Error("Failed to crate watch channel", "error", err)
-		return err
+		return nil, err
 	}
 
 	// Do an initial query of the files that are in the folder
 	go gd.QueryFiles()
 
-	return nil
+	return gd.documents, nil
 }
 
 // QueryFiles from the watch folder and send them on the channel
@@ -82,7 +81,7 @@ func (gd *GDriveStorageContext) QueryFiles() {
 	// build the query string to find the new fines in Google Drive
 	query := gd.buildFileSearchQuery()
 
-	fileList, err := gd.driveService.Files.List().Q(query).Fields("files(id, name, createdTime, modifiedTime)").Do()
+	fileList, err := gd.driveService.Files.List().Q(query).Fields("files(id, name, mimeType, createdTime, modifiedTime)").Do()
 	if err != nil {
 		slog.Error("Failed to fetch files", "error", err)
 		return
@@ -110,17 +109,31 @@ func (gd *GDriveStorageContext) QueryFiles() {
 		document := document.Document{
 			ID:           file.Id,
 			Name:         file.Name,
+			MimeType:     file.MimeType,
 			CreatedTime:  createdTime,
 			ModifiedTime: modifiedTime,
 		}
 
-		gd.documents <- document
+		gd.documents <- &document
 	}
 }
 
 // Write the given file to the storage
-func (gd *GDriveStorageContext) Write(srcDoc document.Document, reader io.Reader) (document.Document, error) {
-	return document.Document{}, errors.ErrUnsupported
+func (gd *GDriveStorageContext) Write(srcDoc *document.Document, reader io.Reader) (*document.Document, error) {
+	return &document.Document{}, errors.ErrUnsupported
+}
+
+// Get a io.Reader for the document
+func (gd *GDriveStorageContext) GetDocumentReader(document *document.Document) (io.ReadCloser, error) {
+	// Get the file data
+	resp, err := gd.driveService.Files.Get(document.ID).Download()
+	if err != nil {
+		slog.Error("Unable to get the file reader", "error", err)
+		return nil, err
+
+	}
+
+	return resp.Body, nil
 }
 
 // Initialize environment variables
@@ -291,18 +304,6 @@ func (gd *GDriveStorageContext) buildFileSearchQuery() string {
 	query := fmt.Sprintf("mimeType='application/pdf' and '%s' in parents", gd.watchFolderID)
 
 	return query
-}
-
-func (gd *GDriveStorageContext) GetFileReader(document document.Document) (io.ReadCloser, error) {
-	// Get the file data
-	resp, err := gd.driveService.Files.Get(document.ID).Download()
-	if err != nil {
-		slog.Error("Unable to get the file reader", "error", err)
-		return nil, err
-
-	}
-
-	return resp.Body, nil
 }
 
 func (gd *GDriveStorageContext) stopChannelWatch(channelID, resourceID string) {

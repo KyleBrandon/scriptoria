@@ -23,7 +23,7 @@ type GDriveStorageContext struct {
 	driveService *drive.Service
 	channelID    string
 
-	documents chan document.Document
+	documents chan *document.Document
 }
 
 type GoogleDriveStore interface {

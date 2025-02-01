@@ -7,10 +7,9 @@ import (
 
 	"github.com/KyleBrandon/scriptoria/internal/database"
 	"github.com/KyleBrandon/scriptoria/pkg/document"
-	"github.com/KyleBrandon/scriptoria/pkg/document/processor/mathpix"
 )
 
-func New(ctx context.Context, queries *database.Queries, source, destination document.DocumentStorage) (*DocumentManager, error) {
+func New(ctx context.Context, queries *database.Queries, source, destination document.DocumentStorage, processors []document.DocumentProcessor) (*DocumentManager, error) {
 	slog.Debug(">>InitializeDocumentManager")
 	defer slog.Debug("<<InitializeDocumentManager")
 
@@ -20,29 +19,45 @@ func New(ctx context.Context, queries *database.Queries, source, destination doc
 	// create the DocumentMangaer and initialize it
 	var wg sync.WaitGroup
 	dm := &DocumentManager{
-		ctx:        mgrCtx,
-		wg:         &wg,
-		cancelFunc: mgrCanceFunc,
-		store:      queries,
-		documents:  make(chan document.Document, 10),
+		ctx:         mgrCtx,
+		wg:          &wg,
+		cancelFunc:  mgrCanceFunc,
+		store:       queries,
+		source:      source,
+		destination: destination,
+		processors:  processors,
 	}
 
 	// initialize the source storage
-	err := source.Initialize(dm.ctx, dm.documents)
+	err := dm.source.Initialize(dm.ctx)
 	if err != nil {
 		slog.Error("Failed to initialize the source storage", "error", err)
 		return nil, err
 	}
 
 	// initialize the dest storage
-	err = destination.Initialize(dm.ctx, dm.documents)
+	err = destination.Initialize(dm.ctx)
 	if err != nil {
 		slog.Error("Failed to initialize the destination storage", "error", err)
 		return nil, err
 	}
 
-	dm.source = source
-	dm.destination = destination
+	dm.inputCh = make(chan *document.DocumentTransform)
+	inputCh := dm.inputCh
+
+	// loop through the processors and initialize them by chaining their channels
+	for _, p := range processors {
+		outputCh, err := p.Initialize(dm.ctx, inputCh)
+		if err != nil {
+			slog.Error("Failed to initialize the document processor", "error", err)
+			return nil, err
+		}
+
+		inputCh = outputCh
+	}
+
+	// output processor channel is the last input
+	dm.outputCh = inputCh
 
 	return dm, nil
 }
@@ -53,10 +68,6 @@ func (dm *DocumentManager) CancelAndWait() {
 
 	// wait until the document go routines are finished
 	dm.wg.Wait()
-}
-
-func (dm *DocumentManager) AddDocument(doc document.Document) {
-	dm.documents <- doc
 }
 
 func (dm *DocumentManager) StartMonitoring() {
@@ -70,15 +81,21 @@ func (dm *DocumentManager) documentStorageMonitor() {
 	slog.Info(">>documentStorageMonitor")
 	defer slog.Info("<<documentStorageMonitor")
 
-	dm.source.StartWatching()
+	// start watching the source for new files
+	docCh, err := dm.source.StartWatching()
+	if err != nil {
+		slog.Error("Failed to start watching on the source channel", "source", dm.sourceType, "error", err)
+		return
+	}
 
-	for srcDoc := range dm.documents {
+	// process each file in a go routine as they come in
+	for srcDoc := range docCh {
 		dm.wg.Add(1)
-		go dm.processDocument(srcDoc)
+		go dm.processDocument(srcDoc, dm.source)
 	}
 }
 
-func (dm *DocumentManager) processDocument(srcDoc document.Document) {
+func (dm *DocumentManager) processDocument(srcDoc *document.Document, srcStorage document.DocumentStorage) {
 	defer dm.wg.Done()
 
 	// check if we've processed this file before
@@ -98,33 +115,29 @@ func (dm *DocumentManager) processDocument(srcDoc document.Document) {
 	_, err = dm.store.CreateDocument(dm.ctx, arg)
 	if err != nil {
 		slog.Error("Failed to update the document proccessing status", "id", dbDoc.ID, "error", err)
+		return
 	}
 
-	// TODO: process the document in another go routine
-	slog.Info("Processing document", "id", srcDoc.ID, "name", srcDoc.Name, "createdTime", srcDoc.CreatedTime, "modifiedTime", srcDoc.ModifiedTime)
-
 	dm.wg.Add(1)
-	go dm.copyFileFromSource(srcDoc)
-}
-
-func (dm *DocumentManager) copyFileFromSource(srcDoc document.Document) {
-	defer dm.wg.Done()
-
-	reader, err := dm.source.GetFileReader(srcDoc)
+	reader, err := srcStorage.GetDocumentReader(srcDoc)
 	if err != nil {
-		slog.Error("Failed to get the file reader from the source storage", "sourceID", srcDoc.ID, "name", srcDoc.Name, "error", err)
+		slog.Error("Failed to get the document reader", "error", err)
 		return
 	}
 	defer reader.Close()
 
-	destDoc, err := dm.destination.Write(srcDoc, reader)
-	if err != nil {
-		slog.Error("Failed to write the file to the destination storage", "sourceID", srcDoc.ID, "name", srcDoc.Name, "destinationType", dm.destType, "error", err)
-		return
+	dm.inputCh <- &document.DocumentTransform{
+		Doc:    srcDoc,
+		Reader: reader,
 	}
 
-	// TODO: Look at this again, it feels odd
-	dm.wg.Add(1)
-	mp := mathpix.New()
-	go mp.ProcessDocument(destDoc, dm.destination)
+	// wait on output
+	outputTransform := <-dm.outputCh
+	if outputTransform.Error != nil {
+		slog.Error("Document processing failed", "error", err)
+	} else {
+		outputTransform.Reader.Close()
+
+		slog.Info("Document processing succeeded")
+	}
 }

@@ -20,7 +20,7 @@ func New(store LocalDriveStore) *LocalStorageContext {
 	return drive
 }
 
-func (ld *LocalStorageContext) Initialize(ctx context.Context, documents chan document.Document) error {
+func (ld *LocalStorageContext) Initialize(ctx context.Context) error {
 	ld.ctx = ctx
 	err := ld.readConfigurationSettings()
 	if err != nil {
@@ -38,11 +38,11 @@ func (ld *LocalStorageContext) readConfigurationSettings() error {
 	return nil
 }
 
-func (ld *LocalStorageContext) StartWatching() error {
-	return errors.ErrUnsupported
+func (ld *LocalStorageContext) StartWatching() (chan *document.Document, error) {
+	return nil, errors.ErrUnsupported
 }
 
-func (ld *LocalStorageContext) GetFileReader(document document.Document) (io.ReadCloser, error) {
+func (ld *LocalStorageContext) GetDocumentReader(document *document.Document) (io.ReadCloser, error) {
 	file, err := os.Open(document.ID)
 	if err != nil {
 		return nil, err
@@ -51,14 +51,14 @@ func (ld *LocalStorageContext) GetFileReader(document document.Document) (io.Rea
 	return file, nil
 }
 
-func (ld *LocalStorageContext) Write(srcDoc document.Document, reader io.Reader) (document.Document, error) {
+func (ld *LocalStorageContext) Write(srcDoc *document.Document, reader io.Reader) (*document.Document, error) {
 	filePath := filepath.Join(ld.localFilePath, srcDoc.Name)
 
 	// Create output file
 	outFile, err := os.Create(filePath)
 	if err != nil {
 		slog.Error("Unable to create local file", "error", err)
-		return document.Document{}, err
+		return &document.Document{}, err
 	}
 
 	defer outFile.Close()
@@ -67,15 +67,17 @@ func (ld *LocalStorageContext) Write(srcDoc document.Document, reader io.Reader)
 	_, err = io.Copy(outFile, reader)
 	if err != nil {
 		slog.Error("Unable to save file", "error", err)
-		return document.Document{}, err
+		return &document.Document{}, err
 	}
 
 	destDoc := document.Document{
-		ID:           filePath,
-		Name:         srcDoc.Name,
+		ID:   filePath,
+		Name: srcDoc.Name,
+		// TODO: how to fix this?
+		MimeType:     "",
 		CreatedTime:  time.Now(),
 		ModifiedTime: time.Now(),
 	}
 
-	return destDoc, nil
+	return &destDoc, nil
 }

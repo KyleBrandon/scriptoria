@@ -13,7 +13,10 @@ import (
 
 	"github.com/KyleBrandon/scriptoria/internal/config"
 	"github.com/KyleBrandon/scriptoria/internal/database"
+	"github.com/KyleBrandon/scriptoria/pkg/document"
 	"github.com/KyleBrandon/scriptoria/pkg/document/manager"
+	localproc "github.com/KyleBrandon/scriptoria/pkg/document/processor/local"
+	"github.com/KyleBrandon/scriptoria/pkg/document/processor/mathpix"
 	"github.com/KyleBrandon/scriptoria/pkg/document/storage"
 	"github.com/KyleBrandon/scriptoria/pkg/server/services/health"
 	"github.com/KyleBrandon/scriptoria/pkg/utils"
@@ -117,7 +120,18 @@ func (cfg *ServerConfig) initializeStorageManager() error {
 		return err
 	}
 
-	cfg.documentManager, err = manager.New(cfg.ctx, cfg.queries, source, destination)
+	// TODO: read this from a configuration
+	processors := make([]document.DocumentProcessor, 0)
+	// save the pdf
+	processors = append(processors, localproc.New(cfg.queries))
+	// run it through matpix
+	processors = append(processors, mathpix.New(cfg.queries))
+	// save the mmd file from mathpix
+	processors = append(processors, localproc.New(cfg.queries))
+
+	// TODO: run through ChatGPT and save cleaned markdown output
+
+	cfg.documentManager, err = manager.New(cfg.ctx, cfg.queries, source, destination, processors)
 	if err != nil {
 		slog.Error("Failed to initialize the document manager", "error", err)
 		return err
