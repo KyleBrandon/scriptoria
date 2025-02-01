@@ -15,6 +15,7 @@ import (
 	"github.com/KyleBrandon/scriptoria/internal/database"
 	"github.com/KyleBrandon/scriptoria/pkg/document"
 	"github.com/KyleBrandon/scriptoria/pkg/document/manager"
+	"github.com/KyleBrandon/scriptoria/pkg/document/processor/chatgpt"
 	localproc "github.com/KyleBrandon/scriptoria/pkg/document/processor/local"
 	"github.com/KyleBrandon/scriptoria/pkg/document/processor/mathpix"
 	"github.com/KyleBrandon/scriptoria/pkg/document/storage"
@@ -127,6 +128,10 @@ func (cfg *ServerConfig) initializeStorageManager() error {
 	// run it through matpix
 	processors = append(processors, mathpix.New(cfg.queries))
 	// save the mmd file from mathpix
+	processors = append(processors, localproc.New(cfg.queries))
+	// process the document with ChatGPT
+	processors = append(processors, chatgpt.New(cfg.queries))
+	// save the final md file
 	processors = append(processors, localproc.New(cfg.queries))
 
 	// TODO: run through ChatGPT and save cleaned markdown output

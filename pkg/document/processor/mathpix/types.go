@@ -32,9 +32,8 @@ type (
 
 	MathpixDocumentProcessor struct {
 		//
-		markdownFileLocation string
-		mathpixAppID         string
-		mathpixAppKey        string
+		mathpixAppID  string
+		mathpixAppKey string
 
 		ctx      context.Context
 		store    mathpixDocumentStore

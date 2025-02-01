@@ -120,11 +120,6 @@ func (mp *MathpixDocumentProcessor) readConfigurationSettings() error {
 		return errors.New("environment variable MATHPIX_APP_KEY is not present")
 	}
 
-	mp.markdownFileLocation = os.Getenv("MARKDOWN_FILE_LOCATION")
-	if len(mp.markdownFileLocation) == 0 {
-		return errors.New("environment variable MARKDOWN_FILE_LOCATION is not present")
-	}
-
 	return nil
 }
 
@@ -224,7 +219,7 @@ func (mp *MathpixDocumentProcessor) pollForResults(pdfID string) error {
 func (mp *MathpixDocumentProcessor) queryConversionResults(pdfID string) (string, error) {
 	slog.Debug(">>MathpixDocumentProcessor.queryConversionResults")
 	defer slog.Debug("<<MathpixDocumentProcessor.queryConversionResults")
-	resultsURL := fmt.Sprintf("%s/%s.mmd", MathpixPdfApiURL, pdfID)
+	resultsURL := fmt.Sprintf("%s/%s.md", MathpixPdfApiURL, pdfID)
 
 	req, err := mp.newRequest("GET", resultsURL, nil)
 	if err != nil {
