@@ -3,47 +3,104 @@ package manager
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"sync"
 
+	"github.com/KyleBrandon/scriptoria/internal/config"
 	"github.com/KyleBrandon/scriptoria/internal/database"
 	"github.com/KyleBrandon/scriptoria/pkg/document"
+	"github.com/KyleBrandon/scriptoria/pkg/document/processor"
+	"github.com/KyleBrandon/scriptoria/pkg/document/processor/chatgpt"
+	"github.com/KyleBrandon/scriptoria/pkg/document/processor/mathpix"
+	"github.com/KyleBrandon/scriptoria/pkg/document/processor/obsidian"
+	"github.com/KyleBrandon/scriptoria/pkg/document/storage"
 )
 
-func New(ctx context.Context, queries *database.Queries, source document.DocumentStorage, processors []document.DocumentProcessor, postProcessor document.DocumentPostProcessor) (*DocumentManager, error) {
-	slog.Debug(">>InitializeDocumentManager")
-	defer slog.Debug("<<InitializeDocumentManager")
+func New(ctx context.Context, queries *database.Queries, config config.Config, mux *http.ServeMux) (*DocumentManager, error) {
+	slog.Debug(">>DocumentManager.New")
+	defer slog.Debug("<<DocumentManager.New")
 
-	// create sub-context and cancelFunc
-	mgrCtx, mgrCanceFunc := context.WithCancel(ctx)
+	// create sub-context and cancelCauseFunc
+	mgrCtx, cancelCauseFunc := context.WithCancelCause(ctx)
 
 	// create the DocumentMangaer and initialize it
 	var wg sync.WaitGroup
 	dm := &DocumentManager{
-		ctx:           mgrCtx,
-		wg:            &wg,
-		cancelFunc:    mgrCanceFunc,
-		store:         queries,
-		source:        source,
-		processors:    processors,
-		postProcessor: postProcessor,
+		ctx:             mgrCtx,
+		wg:              &wg,
+		cancelCauseFunc: cancelCauseFunc,
+		store:           queries,
+		sourceType:      config.SourceStore,
 	}
 
-	// initialize the source storage
-	err := dm.source.Initialize(dm.ctx)
+	// initialize the storage reader
+	err := dm.initializeStorage(queries, mux)
 	if err != nil {
-		slog.Error("Failed to initialize the source storage", "error", err)
 		return nil, err
 	}
 
-	dm.inputCh = make(chan *document.DocumentTransform)
+	// initialize the processors
+	err = dm.initializeProcessors(queries, config)
+	if err != nil {
+		return nil, err
+	}
+
+	return dm, nil
+}
+
+func (dm *DocumentManager) initializeStorage(queries *database.Queries, mux *http.ServeMux) error {
+	slog.Debug(">>DocumentManager.initializeStorage")
+	defer slog.Debug("<<DocumentManager.initializeStorage")
+
+	storage, err := storage.BuildDocumentStorage(dm.sourceType, queries, mux)
+	if err != nil {
+		slog.Error("Failed to initialize the source storage", "error", err)
+		return err
+	}
+
+	// initialize the source storage
+	err = storage.Initialize(dm.ctx)
+	if err != nil {
+		slog.Error("Failed to initialize the source storage", "error", err)
+		return err
+	}
+
+	dm.srcStorage = storage
+
+	return nil
+}
+
+func (dm *DocumentManager) initializeProcessors(queries *database.Queries, config config.Config) error {
+	slog.Debug(">>DocumentManager.initializeProcessors")
+	defer slog.Debug("<<DocumentManager.initializeProcessors")
+
+	// TODO: build this from a config
+	cfg := processor.ProcessorConfig{
+		Ctx:               dm.ctx,
+		CancelCauseFunc:   dm.cancelCauseFunc,
+		Store:             queries,
+		TempStorageFolder: config.TempStorageFolder,
+		AttachmentsFolder: config.AttachmentsFolder,
+		NotesFolder:       config.NotesFolder,
+	}
+
+	dm.processors = make([]*processor.ProcessorContext, 0)
+	dm.processors = append(dm.processors, processor.New(cfg, processor.NewTempStorageProcessor()))
+	dm.processors = append(dm.processors, processor.New(cfg, mathpix.NewMathpixProcessor()))
+	dm.processors = append(dm.processors, processor.New(cfg, chatgpt.NewChatGPTProcessor()))
+	dm.processors = append(dm.processors, processor.New(cfg, obsidian.NewObsidianProcessor()))
+	dm.processors = append(dm.processors, processor.New(cfg, processor.NewBundleProcessor(config.WorkBundleFolder, config.WorkBundleFolder)))
+	dm.processors = append(dm.processors, processor.New(cfg, processor.NewBundleProcessor(config.NotesFolder, config.AttachmentsFolder)))
+
+	dm.inputCh = make(chan *document.TransformContext)
 	inputCh := dm.inputCh
 
 	// loop through the processors and initialize them by chaining their channels
 	for _, p := range dm.processors {
-		outputCh, err := p.Initialize(dm.ctx, inputCh)
+		outputCh, err := p.Initialize(inputCh)
 		if err != nil {
-			slog.Error("Failed to initialize the document processor", "error", err)
-			return nil, err
+			slog.Error("Failed to initialize the processors", "error", err)
+			return err
 		}
 
 		inputCh = outputCh
@@ -52,17 +109,12 @@ func New(ctx context.Context, queries *database.Queries, source document.Documen
 	// output processor channel is the last input
 	dm.outputCh = inputCh
 
-	err = dm.postProcessor.Initialize(dm.ctx)
-	if err != nil {
-		slog.Error("Failed to initialize the post processor")
-	}
-
-	return dm, nil
+	return nil
 }
 
 func (dm *DocumentManager) CancelAndWait() {
 	// cancel all go routines
-	dm.cancelFunc()
+	dm.cancelCauseFunc(nil)
 
 	// cancel all the processors
 	for _, p := range dm.processors {
@@ -77,6 +129,7 @@ func (dm *DocumentManager) StartMonitoring() {
 	slog.Debug(">>StartMonitoring")
 	defer slog.Debug("<<StartMonitoring")
 
+	dm.wg.Add(1)
 	go dm.documentStorageMonitor()
 }
 
@@ -84,29 +137,79 @@ func (dm *DocumentManager) documentStorageMonitor() {
 	slog.Debug(">>documentStorageMonitor")
 	defer slog.Debug("<<documentStorageMonitor")
 
+	defer dm.wg.Done()
+
 	// start watching the source for new files
-	docCh, err := dm.source.StartWatching()
+	docCh, err := dm.srcStorage.StartWatching()
 	if err != nil {
 		slog.Error("Failed to start watching on the source channel", "source", dm.sourceType, "error", err)
 		return
 	}
 
 	// process each file in a go routine as they come in
-	for srcDoc := range docCh {
-		dm.wg.Add(1)
-		go dm.processDocument(srcDoc, dm.source)
+
+	for {
+		select {
+		case <-dm.ctx.Done():
+			slog.Debug("DocumentManager.documentStorageMonitor canceled")
+			return
+
+		case srcDoc := <-docCh:
+			dm.wg.Add(1)
+			go dm.processDocument(srcDoc, dm.srcStorage)
+		}
 	}
 }
 
-func (dm *DocumentManager) processDocument(srcDoc *document.Document, srcStorage document.DocumentStorage) {
+func (dm *DocumentManager) processDocument(srcDoc *document.Document, srcStorage document.Storage) {
+	slog.Debug(">>DocumentManger.processDocument")
+	defer slog.Debug("<<DocumentManger.processDocument")
+
 	defer dm.wg.Done()
+
+	// check if we've processed this document and create it's state in the database
+	err := dm.createNewDocument(srcDoc)
+	if err != nil {
+		return
+	}
+
+	// get the io.Reader for the document from the source storae
+	inputReader, err := srcStorage.GetReader(srcDoc)
+	if err != nil {
+		slog.Error("Failed to get the document reader", "error", err)
+		return
+	}
+
+	// Send the document transform context to the input channel (first processor)
+	dm.inputCh <- &document.TransformContext{
+		SourceName: srcDoc.Name,
+		Reader:     inputReader,
+	}
+
+	// wait on output channel
+	t := <-dm.outputCh
+
+	// if we have a final reader make sure it's closed
+	if t.Reader != nil {
+		t.Reader.Close()
+	}
+
+	// TODO: Archive file in the source storage
+	srcStorage.Archive(srcDoc)
+
+	slog.Info("Finished processing the document", "sourceName", t.SourceName)
+}
+
+func (dm *DocumentManager) createNewDocument(srcDoc *document.Document) error {
+	slog.Debug(">>DocumentManager.createNewDocument")
+	defer slog.Debug("<<DocumentManager.createNewDocument")
 
 	// check if we've processed this file before
 	dbDoc, err := dm.store.FindDocumentBySourceId(dm.ctx, srcDoc.ID)
 	if err == nil {
 		// assume we've processed this or it's in process
 		slog.Warn("Document exists", "id", dbDoc.ID, "sourceID", dbDoc.SourceID, "name", dbDoc.SourceName)
-		return
+		return err
 	}
 
 	// mark the file as having been processed
@@ -118,30 +221,8 @@ func (dm *DocumentManager) processDocument(srcDoc *document.Document, srcStorage
 	_, err = dm.store.CreateDocument(dm.ctx, arg)
 	if err != nil {
 		slog.Error("Failed to update the document proccessing status", "id", dbDoc.ID, "error", err)
-		return
+		return err
 	}
 
-	reader, err := srcStorage.GetDocumentReader(srcDoc)
-	if err != nil {
-		slog.Error("Failed to get the document reader", "error", err)
-		return
-	}
-	defer reader.Close()
-
-	dm.inputCh <- &document.DocumentTransform{
-		Doc:    srcDoc,
-		Reader: reader,
-	}
-
-	// wait on output
-	outputTransform := <-dm.outputCh
-	if outputTransform.Error != nil {
-		slog.Error("Document processing failed", "error", err)
-		return
-	}
-
-	err = dm.postProcessor.Process(srcDoc, outputTransform)
-	if err != nil {
-		return
-	}
+	return nil
 }

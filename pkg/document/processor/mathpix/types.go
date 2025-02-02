@@ -1,12 +1,5 @@
 package mathpix
 
-import (
-	"context"
-	"sync"
-
-	"github.com/KyleBrandon/scriptoria/pkg/document"
-)
-
 // Mathpix API endpoint
 const (
 	MathpixPdfApiURL = "https://api.mathpix.com/v3/pdf"
@@ -34,19 +27,10 @@ type (
 		PdfMarkdown string `json:"pdf_md,omitempty"`
 	}
 
-	// Identify the database methos for the Mathpix processor
-	mathpixDocumentStore interface{}
-
 	MathpixDocumentProcessor struct {
 		//
-		mathpixAppID  string
-		mathpixAppKey string
-
-		ctx        context.Context
-		cancelFunc context.CancelFunc
-		wg         *sync.WaitGroup
-		store      mathpixDocumentStore
-		inputCh    chan *document.DocumentTransform
-		outputCh   chan *document.DocumentTransform
+		mathpixAppID    string
+		mathpixAppKey   string
+		tempStoragePath string
 	}
 )

@@ -29,6 +29,11 @@ func (ld *LocalStorageContext) Initialize(ctx context.Context) error {
 	return nil
 }
 
+// Cancel the context and wait for any go routine to finish
+func (gd *LocalStorageContext) CancelAndWait() {
+	// we don't do anything that requires a context to cancel in the local storage
+}
+
 func (ld *LocalStorageContext) readConfigurationSettings() error {
 	ld.localFilePath = os.Getenv("LOCAL_STORAGE_PATH")
 	if len(ld.localFilePath) == 0 {
@@ -42,7 +47,7 @@ func (ld *LocalStorageContext) StartWatching() (chan *document.Document, error) 
 	return nil, errors.ErrUnsupported
 }
 
-func (ld *LocalStorageContext) GetDocumentReader(document *document.Document) (io.ReadCloser, error) {
+func (ld *LocalStorageContext) GetReader(document *document.Document) (io.ReadCloser, error) {
 	file, err := os.Open(document.ID)
 	if err != nil {
 		return nil, err
@@ -82,4 +87,8 @@ func (ld *LocalStorageContext) Write(srcDoc *document.Document, reader io.ReadCl
 	}
 
 	return &destDoc, nil
+}
+
+func (ld *LocalStorageContext) Archive(srcDoc *document.Document) error {
+	return errors.ErrUnsupported
 }

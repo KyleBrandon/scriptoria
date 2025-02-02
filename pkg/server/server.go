@@ -13,13 +13,7 @@ import (
 
 	"github.com/KyleBrandon/scriptoria/internal/config"
 	"github.com/KyleBrandon/scriptoria/internal/database"
-	"github.com/KyleBrandon/scriptoria/pkg/document"
 	"github.com/KyleBrandon/scriptoria/pkg/document/manager"
-	"github.com/KyleBrandon/scriptoria/pkg/document/processor/chatgpt"
-	localproc "github.com/KyleBrandon/scriptoria/pkg/document/processor/local"
-	"github.com/KyleBrandon/scriptoria/pkg/document/processor/mathpix"
-	"github.com/KyleBrandon/scriptoria/pkg/document/processor/obsidian"
-	"github.com/KyleBrandon/scriptoria/pkg/document/storage"
 	"github.com/KyleBrandon/scriptoria/pkg/server/services/health"
 	"github.com/KyleBrandon/scriptoria/pkg/utils"
 	"github.com/joho/godotenv"
@@ -105,31 +99,13 @@ func InitializeServer() error {
 }
 
 func (cfg *ServerConfig) initializeStorageManager() error {
-	// build the source stoage that we receive Documents from
-	source, err := storage.BuildDocumentStorage(cfg.Config.SourceStore, cfg.queries, cfg.mux)
-	if err != nil {
-		slog.Error("Failed to initialize the source storage", "error", err)
-		return err
-	}
-
-	// TODO: read this from a configuration
-	processors := make([]document.DocumentProcessor, 0)
-	// TODO: Change this to a pre-processor to copy the image?
-	// save the original pdf to my attachments folder
-	processors = append(processors, localproc.New(cfg.queries, cfg.Config.LocalStoragePath))
-	// run it through matpix
-	processors = append(processors, mathpix.New(cfg.queries))
-	// clean up the document with ChatGPT
-	processors = append(processors, chatgpt.New(cfg.queries))
-
-	postProcessor := obsidian.New(cfg.queries, cfg.Config.LocalStoragePath, cfg.Config.AttachementPath, cfg.Config.NotesPath)
-
-	cfg.documentManager, err = manager.New(cfg.ctx, cfg.queries, source, processors, postProcessor)
+	dm, err := manager.New(cfg.ctx, cfg.queries, cfg.Config, cfg.mux)
 	if err != nil {
 		slog.Error("Failed to initialize the document manager", "error", err)
 		return err
 	}
 
+	cfg.documentManager = dm
 	cfg.documentManager.StartMonitoring()
 
 	return nil

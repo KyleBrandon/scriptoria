@@ -1,7 +1,7 @@
 {
   "source_store": "Google Drive",
   "dest_store": "Local",
-  "origin_patterns": ["localhost:3000", "http://localhost:3000"],
-  "attachments_location": "",
-  "notes_location": ""
+  "attachments_location": "<file path to where the original PDF image should be copied>",
+  "notes_location": "<file path where the markdown note should be copied>",
+  "local_storage_path": "<file path to temp local storage>"
 }

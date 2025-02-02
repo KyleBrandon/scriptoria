@@ -2,7 +2,6 @@ package mathpix
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,118 +11,64 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"sync"
 	"time"
-
-	"github.com/KyleBrandon/scriptoria/pkg/document"
 )
 
-func New(store mathpixDocumentStore) *MathpixDocumentProcessor {
+// NewMathpixProcessor will create a document processor to send to the Mathix PDF API to get a Markdown version of the document.
+// The reader that is returned will be for an in-memory version of the Markdown file.
+func NewMathpixProcessor() *MathpixDocumentProcessor {
 	mp := &MathpixDocumentProcessor{}
 
-	mp.store = store
-
+	mp.readConfigurationSettings()
 	return mp
 }
 
-// Initialize the Mathpix document processor
-func (mp *MathpixDocumentProcessor) Initialize(ctx context.Context, inputCh chan *document.DocumentTransform) (chan *document.DocumentTransform, error) {
-	slog.Debug(">>MathpixDocumentProcessor.Initialize")
-	defer slog.Debug("<<MathpixDocumentProcessor.Initialize")
-
-	mp.ctx, mp.cancelFunc = context.WithCancel(ctx)
-	mp.wg = &sync.WaitGroup{}
-	mp.inputCh = inputCh
-	mp.outputCh = make(chan *document.DocumentTransform)
+func (mp *MathpixDocumentProcessor) Initialize(tempStoragePath string) error {
+	mp.tempStoragePath = tempStoragePath
 
 	err := mp.readConfigurationSettings()
 	if err != nil {
-		return nil, err
+		slog.Error("Failed to read the Mathpix configuration settings", "error", err)
+		return err
 	}
 
-	mp.wg.Add(1)
-	go mp.process()
-
-	return mp.outputCh, nil
+	return nil
 }
 
-func (mp *MathpixDocumentProcessor) CancelAndWait() {
-	mp.cancelFunc()
-	mp.wg.Wait()
-}
-
-func (mp *MathpixDocumentProcessor) process() {
-	slog.Debug(">>MathpixDocumentProcessor.process")
-	defer slog.Debug("<<MathpixDocumentProcessor.process")
-
-	defer mp.wg.Done()
-
-	for {
-		select {
-		case <-mp.ctx.Done():
-			slog.Debug("MathpixDocumentProcessor.process canceled")
-			return
-
-		case t := <-mp.inputCh:
-			slog.Debug("MathMathpixDocumentProcessor.process received document to process")
-			if t.Error != nil {
-				continue
-			}
-
-			mp.wg.Add(1)
-			go mp.processDocument(t)
-		}
-	}
-}
-
-func (mp *MathpixDocumentProcessor) processDocument(t *document.DocumentTransform) {
+func (mp *MathpixDocumentProcessor) Process(sourceName string, reader io.ReadCloser) (io.ReadCloser, error) {
 	slog.Debug(">>MathpixDocumentProcessor.processDocument")
 	defer slog.Debug("<<MathpixDocumentProcessor.processDocument")
 
-	mp.wg.Done()
-	defer t.Reader.Close()
-
-	output := document.DocumentTransform{}
-
 	// Upload PDF to Mathpix
-	pdfID, err := mp.sendDocumentToMathpix(t.Doc.Name, t.Reader)
+	pdfID, err := mp.sendDocumentToMathpix(sourceName, reader)
 	if err != nil {
 		slog.Error("Error uploading PDF", "error", err)
-		output.Error = err
-		mp.outputCh <- &output
-		return
-
+		return nil, err
 	}
 
 	// Poll for results
 	err = mp.pollForResults(pdfID)
 	if err != nil {
 		slog.Error("Error getting results", "error", err)
-		output.Error = err
-		mp.outputCh <- &output
-		return
+		return nil, err
 	}
 
 	markdownText, err := mp.queryConversionResults(pdfID)
 	if err != nil {
 		slog.Error("Failed to query conversion results", "error", err)
-		output.Error = err
-		mp.outputCh <- &output
-		return
+		return nil, err
 	}
 
-	name := t.Doc.GetDocumentName() + ".mmd"
+	// save the original markdown from Mathpx to the temp folder
+	// name := strings.TrimSuffix(sourceName, filepath.Ext(sourceName))
+	// name = fmt.Sprintf("%s.md", name)
+	// filePath := filepath.Join(mp.tempStoragePath, name)
+	// processor.CopyFileFromReader(filePath, io.NopCloser(strings.NewReader(markdownText)))
 
-	// create an output document that represents the multi-markdown file
-	output.Doc = &document.Document{
-		Name:         name,
-		MimeType:     "text/markdown",
-		CreatedTime:  time.Now(),
-		ModifiedTime: time.Now(),
-	}
+	// set the new reader
+	r := io.NopCloser(strings.NewReader(markdownText))
 
-	output.Reader = io.NopCloser(strings.NewReader(markdownText))
-	mp.outputCh <- &output
+	return r, nil
 }
 
 // Initialize environment variables

@@ -6,6 +6,7 @@ import (
 
 	"github.com/KyleBrandon/scriptoria/internal/database"
 	"github.com/KyleBrandon/scriptoria/pkg/document"
+	"github.com/KyleBrandon/scriptoria/pkg/document/processor"
 	"github.com/google/uuid"
 )
 
@@ -21,17 +22,14 @@ type (
 	DocumentManager struct {
 		sync.Mutex
 
-		ctx           context.Context
-		cancelFunc    context.CancelFunc
-		wg            *sync.WaitGroup
-		store         DocumentManagerStore
-		sourceType    string
-		destType      string
-		source        document.DocumentStorage
-		destination   document.DocumentStorage
-		processors    []document.DocumentProcessor
-		postProcessor document.DocumentPostProcessor
-		inputCh       chan *document.DocumentTransform
-		outputCh      chan *document.DocumentTransform
+		ctx             context.Context
+		cancelCauseFunc context.CancelCauseFunc
+		wg              *sync.WaitGroup
+		store           DocumentManagerStore
+		sourceType      string
+		srcStorage      document.Storage
+		processors      []*processor.ProcessorContext
+		inputCh         chan *document.TransformContext
+		outputCh        chan *document.TransformContext
 	}
 )

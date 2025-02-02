@@ -8,45 +8,25 @@ import (
 	"log/slog"
 	"os"
 	"strings"
-	"sync"
-	"time"
 
-	"github.com/KyleBrandon/scriptoria/pkg/document"
 	"github.com/sashabaranov/go-openai"
 )
 
-func New(store chatgptDocumentStore) *ChatgptDocumentProcessor {
-	mp := &ChatgptDocumentProcessor{}
+// NewChatGPTProcessor will return processor that will send the document through ChatGPT with instructions to clean the formatting, spelling, and grammar.
+func NewChatGPTProcessor() *ChatgptDocumentProcessor {
+	cp := &ChatgptDocumentProcessor{}
 
-	mp.store = store
-
-	return mp
+	return cp
 }
 
-// Initialize the Mathpix document processor
-func (cp *ChatgptDocumentProcessor) Initialize(ctx context.Context, inputCh chan *document.DocumentTransform) (chan *document.DocumentTransform, error) {
-	slog.Debug(">>ChatgptDocumentProcessor.Initialize")
-	defer slog.Debug("<<ChatgptDocumentProcessor.Initialize")
-
-	cp.ctx, cp.cancelFunc = context.WithCancel(ctx)
-	cp.wg = &sync.WaitGroup{}
-	cp.inputCh = inputCh
-	cp.outputCh = make(chan *document.DocumentTransform)
-
+func (cp *ChatgptDocumentProcessor) Initialize(tempStoragePath string) error {
 	err := cp.readConfigurationSettings()
 	if err != nil {
-		return nil, err
+		slog.Error("Failed to read the configuration settings for ChatGPT", "error", err)
+		return err
 	}
 
-	cp.wg.Add(1)
-	go cp.process()
-
-	return cp.outputCh, nil
-}
-
-func (cp *ChatgptDocumentProcessor) CancelAndWait() {
-	cp.cancelFunc()
-	cp.wg.Wait()
+	return nil
 }
 
 func (cp *ChatgptDocumentProcessor) readConfigurationSettings() error {
@@ -58,54 +38,21 @@ func (cp *ChatgptDocumentProcessor) readConfigurationSettings() error {
 	return nil
 }
 
-func (cp *ChatgptDocumentProcessor) process() {
-	slog.Debug(">>ChatgptDocumentProcessor.process")
-	defer slog.Debug("<<ChatgptDocumentProcessor.process")
-
-	defer cp.wg.Done()
-
-	for {
-		select {
-		case <-cp.ctx.Done():
-			slog.Debug("MathpixDocumentProcessor.process canceled")
-			return
-
-		case t := <-cp.inputCh:
-			slog.Debug("MathMathpixDocumentProcessor.process received document to process")
-			if t.Error != nil {
-				continue
-			}
-
-			cp.wg.Add(1)
-			go cp.processDocument(t)
-		}
-	}
-}
-
-func (cp *ChatgptDocumentProcessor) processDocument(t *document.DocumentTransform) {
-	slog.Debug("ChatgptDocumentProcessor.processDocument")
-	defer slog.Debug("ChatgptDocumentProcessor.processDocument")
-
-	defer cp.wg.Done()
-
-	defer t.Reader.Close()
-
-	output := document.DocumentTransform{}
+func (cp *ChatgptDocumentProcessor) Process(sourceName string, reader io.ReadCloser) (io.ReadCloser, error) {
+	slog.Debug(">>ChatgptDocumentProcessor.processDocument")
+	defer slog.Debug("<<ChatgptDocumentProcessor.processDocument")
 
 	// Initialize OpenAI client
 	client := openai.NewClient(cp.chatgptAPIKey)
 
-	content, err := io.ReadAll(t.Reader)
+	content, err := io.ReadAll(reader)
 	if err != err {
 		slog.Error("Failed to read the input document to clean up", "error", err)
-		output.Error = err
-		cp.outputCh <- &output
-		return
+		return nil, err
 	}
 
-	systemMessage := "You are an AI that processes Markdown text. Your task is to clean up the input by fixing Markdown syntax, correcting spelling and grammar, and ensuring proper formatting. Do NOT include any extra explanations, comments, or surrounding text—only return the valid Markdown output."
-
 	// Create a prompt for GPT to clean up the Markdown
+	systemMessage := "You are an AI that processes Markdown text. Your task is to clean up the input by fixing Markdown syntax, correcting spelling and grammar, and ensuring proper formatting. Do NOT include any extra explanations, comments, or surrounding text—only return the valid Markdown output."
 	prompt := fmt.Sprintf("Here is a Markdown file that was generated via OCR. Fix the Markdown formatting, correct any spelling and grammar errors, and ensure the syntax is valid. Do not add any explanations,comments, and do not surround the document text in a markdown code block. ONLY RETURN THE CLEANED MARKDOWN CONTENT AND NOTHING ELSE:\n\n%s", content)
 
 	// Call the ChatGPT API
@@ -122,21 +69,19 @@ func (cp *ChatgptDocumentProcessor) processDocument(t *document.DocumentTransfor
 	)
 	if err != nil {
 		slog.Error("ChatGPT API error", "error", err)
-		output.Error = err
-		cp.outputCh <- &output
-		return
+		return nil, err
 	}
 
 	// Get the cleaned-up text
-	cleanedMarkdown := resp.Choices[0].Message.Content
-	name := t.Doc.GetDocumentName() + ".md"
-	output.Doc = &document.Document{
-		Name:         name,
-		MimeType:     "text/markdown",
-		CreatedTime:  time.Now(),
-		ModifiedTime: time.Now(),
-	}
+	buffer := resp.Choices[0].Message.Content
 
-	output.Reader = io.NopCloser(strings.NewReader(cleanedMarkdown))
-	cp.outputCh <- &output
+	// TODO:
+	// For some reason ChatGPT will occasionally surround the entire processed output with
+	// a Markdown code block. Check to see if the document is surrounded in a code block.
+	// If so, remove it.
+	cleanedMarkdown := strings.TrimPrefix(strings.TrimSuffix(string(buffer), "```"), "```markdown")
+	// set the new reader
+	r := io.NopCloser(strings.NewReader(cleanedMarkdown))
+
+	return r, nil
 }

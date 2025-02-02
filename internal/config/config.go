@@ -11,12 +11,11 @@ const DefaultLogLevel = slog.LevelInfo
 
 // TODO: Update so that each storage config can have settings and add Processor configs
 type Config struct {
-	SourceStore      string   `json:"source_store"`
-	DestStore        string   `json:"dest_store"`
-	OriginPatterns   []string `json:"origin_patterns"`
-	LocalStoragePath string   `json:"local_storage_path"`
-	AttachementPath  string   `json:"attachments_location"`
-	NotesPath        string   `json:"notes_location"`
+	SourceStore       string `json:"source_store"`
+	AttachmentsFolder string `json:"attachments_folder"`
+	NotesFolder       string `json:"notes_folder"`
+	WorkBundleFolder  string `json:"work_bundle_folder"`
+	TempStorageFolder string `json:"temp_storage_folder"`
 }
 
 func LoadConfigSettings(filename string) (Config, error) {

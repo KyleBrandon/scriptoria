@@ -3,6 +3,7 @@ package gdrive
 import (
 	"context"
 	"net/http"
+	"sync"
 
 	"github.com/KyleBrandon/scriptoria/internal/database"
 	"github.com/KyleBrandon/scriptoria/pkg/document"
@@ -10,12 +11,15 @@ import (
 )
 
 type GDriveStorageContext struct {
-	ctx   context.Context
-	store GoogleDriveStore
-	mux   *http.ServeMux
+	ctx        context.Context
+	cancelFunc context.CancelFunc
+	wg         *sync.WaitGroup
+	store      GoogleDriveStore
+	mux        *http.ServeMux
 
 	// environment settings
 	watchFolderID   string
+	archiveFolderID string
 	webhookURL      string
 	credentialsFile string
 	expiration      int64

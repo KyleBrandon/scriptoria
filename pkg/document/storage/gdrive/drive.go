@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/KyleBrandon/scriptoria/internal/database"
@@ -22,10 +24,14 @@ import (
 
 // Create a new Google Drive storage context
 func New(store GoogleDriveStore, mux *http.ServeMux) *GDriveStorageContext {
+	slog.Debug(">>GDriveStorageContext.New")
+	defer slog.Debug("<<GDriveStorageContext.New")
+
 	drive := &GDriveStorageContext{}
 
 	drive.store = store
 	drive.mux = mux
+	drive.wg = &sync.WaitGroup{}
 
 	return drive
 }
@@ -37,7 +43,7 @@ func (gd *GDriveStorageContext) Initialize(ctx context.Context) error {
 
 	gd.documents = make(chan *document.Document, 10)
 
-	gd.ctx = ctx
+	gd.ctx, gd.cancelFunc = context.WithCancel(ctx)
 	err := gd.readConfigurationSettings()
 	if err != nil {
 		return err
@@ -49,6 +55,13 @@ func (gd *GDriveStorageContext) Initialize(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// Cancel the context and wait for any go routine to finish
+func (gd *GDriveStorageContext) CancelAndWait() {
+	gd.cancelFunc()
+
+	gd.wg.Wait()
 }
 
 // StartWatching for files in the Google Drive folder
@@ -67,6 +80,7 @@ func (gd *GDriveStorageContext) StartWatching() (chan *document.Document, error)
 	}
 
 	// Do an initial query of the files that are in the folder
+	gd.wg.Add(1)
 	go gd.QueryFiles()
 
 	return gd.documents, nil
@@ -77,6 +91,8 @@ func (gd *GDriveStorageContext) StartWatching() (chan *document.Document, error)
 func (gd *GDriveStorageContext) QueryFiles() {
 	slog.Debug(">>GoogleDrive.checkForNewOrModifiedFiles")
 	defer slog.Debug("<<GoogleDrive.checkForNewOrModifiedFiles")
+
+	defer gd.wg.Done()
 
 	// build the query string to find the new fines in Google Drive
 	query := gd.buildFileSearchQuery()
@@ -125,7 +141,7 @@ func (gd *GDriveStorageContext) Write(srcDoc *document.Document, reader io.ReadC
 }
 
 // Get a io.Reader for the document
-func (gd *GDriveStorageContext) GetDocumentReader(document *document.Document) (io.ReadCloser, error) {
+func (gd *GDriveStorageContext) GetReader(document *document.Document) (io.ReadCloser, error) {
 	// Get the file data
 	resp, err := gd.driveService.Files.Get(document.ID).Download()
 	if err != nil {
@@ -135,6 +151,26 @@ func (gd *GDriveStorageContext) GetDocumentReader(document *document.Document) (
 	}
 
 	return resp.Body, nil
+}
+
+func (gd *GDriveStorageContext) Archive(document *document.Document) error {
+	// move the document to the archive folder
+	file, err := gd.driveService.Files.Get(document.ID).Fields("parents").Do()
+	if err != nil {
+		return err
+	}
+
+	previousParents := strings.Join(file.Parents, ",")
+	_, err = gd.driveService.Files.Update(document.ID, nil).
+		AddParents(gd.archiveFolderID).
+		RemoveParents(previousParents).
+		Fields("id, parents").
+		Do()
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // Initialize environment variables
@@ -147,6 +183,11 @@ func (gd *GDriveStorageContext) readConfigurationSettings() error {
 	gd.watchFolderID = os.Getenv("GOOGLE_WATCH_FOLDER_ID")
 	if len(gd.watchFolderID) == 0 {
 		return errors.New("environment variable GOOGLE_WATCH_FOLDER_ID is not present")
+	}
+
+	gd.archiveFolderID = os.Getenv("GOOGLE_ARCHIVE_FOLDER_ID")
+	if len(gd.watchFolderID) == 0 {
+		return errors.New("environment variable GOOGLE_ARCHIVE_FOLDER_ID is not present")
 	}
 
 	gd.webhookURL = os.Getenv("GOOGLE_WEBHOOK_URL")
@@ -287,7 +328,8 @@ func (gd *GDriveStorageContext) webhookHandler(w http.ResponseWriter, r *http.Re
 	}
 
 	// Check for new or modified files
-	gd.QueryFiles()
+	gd.wg.Add(1)
+	go gd.QueryFiles()
 
 	// check if the watch channel should be renewed
 	gd.renewWatchChannelIfNeeded()
