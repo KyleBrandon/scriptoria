@@ -18,6 +18,7 @@ import (
 	"github.com/KyleBrandon/scriptoria/pkg/document/processor/chatgpt"
 	localproc "github.com/KyleBrandon/scriptoria/pkg/document/processor/local"
 	"github.com/KyleBrandon/scriptoria/pkg/document/processor/mathpix"
+	"github.com/KyleBrandon/scriptoria/pkg/document/processor/obsidian"
 	"github.com/KyleBrandon/scriptoria/pkg/document/storage"
 	"github.com/KyleBrandon/scriptoria/pkg/server/services/health"
 	"github.com/KyleBrandon/scriptoria/pkg/utils"
@@ -40,17 +41,14 @@ type ServerConfig struct {
 	ServerPort         string
 	LogFileLocation    string
 	ConfigFileLocation string
-	Settings           config.Config
+
+	// config file settings
+	Config config.Config
 
 	// logging information
 	Logger      *slog.Logger
 	LoggerLevel *slog.LevelVar
 	LogFile     *os.File
-
-	// config file settings
-	originPatterns  []string
-	sourceStoreType string
-	destStoreType   string
 
 	queries         *database.Queries
 	DBConnection    *sql.DB
@@ -108,35 +106,25 @@ func InitializeServer() error {
 
 func (cfg *ServerConfig) initializeStorageManager() error {
 	// build the source stoage that we receive Documents from
-	source, err := storage.BuildDocumentStorage(cfg.sourceStoreType, cfg.queries, cfg.mux)
+	source, err := storage.BuildDocumentStorage(cfg.Config.SourceStore, cfg.queries, cfg.mux)
 	if err != nil {
 		slog.Error("Failed to initialize the source storage", "error", err)
 		return err
 	}
 
-	// build the destination stoage that we send Documents to
-	destination, err := storage.BuildDocumentStorage(cfg.destStoreType, cfg.queries, cfg.mux)
-	if err != nil {
-		slog.Error("Failed to initialize the destination storage", "error", err)
-		return err
-	}
-
 	// TODO: read this from a configuration
 	processors := make([]document.DocumentProcessor, 0)
-	// save the pdf
-	processors = append(processors, localproc.New(cfg.queries))
+	// TODO: Change this to a pre-processor to copy the image?
+	// save the original pdf to my attachments folder
+	processors = append(processors, localproc.New(cfg.queries, cfg.Config.LocalStoragePath))
 	// run it through matpix
 	processors = append(processors, mathpix.New(cfg.queries))
-	// save the mmd file from mathpix
-	processors = append(processors, localproc.New(cfg.queries))
-	// process the document with ChatGPT
+	// clean up the document with ChatGPT
 	processors = append(processors, chatgpt.New(cfg.queries))
-	// save the final md file
-	processors = append(processors, localproc.New(cfg.queries))
 
-	// TODO: run through ChatGPT and save cleaned markdown output
+	postProcessor := obsidian.New(cfg.queries, cfg.Config.LocalStoragePath, cfg.Config.AttachementPath, cfg.Config.NotesPath)
 
-	cfg.documentManager, err = manager.New(cfg.ctx, cfg.queries, source, destination, processors)
+	cfg.documentManager, err = manager.New(cfg.ctx, cfg.queries, source, processors, postProcessor)
 	if err != nil {
 		slog.Error("Failed to initialize the document manager", "error", err)
 		return err
@@ -166,11 +154,7 @@ func initializeServerConfig() (ServerConfig, error) {
 		os.Exit(1)
 	}
 
-	cfg.Settings = config
-
-	cfg.originPatterns = config.OriginPatterns
-	cfg.sourceStoreType = config.SourceStore
-	cfg.destStoreType = config.DestStore
+	cfg.Config = config
 
 	return cfg, nil
 }

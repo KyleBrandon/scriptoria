@@ -21,16 +21,17 @@ type (
 	DocumentManager struct {
 		sync.Mutex
 
-		ctx         context.Context
-		cancelFunc  context.CancelFunc
-		wg          *sync.WaitGroup
-		store       DocumentManagerStore
-		sourceType  string
-		destType    string
-		source      document.DocumentStorage
-		destination document.DocumentStorage
-		processors  []document.DocumentProcessor
-		inputCh     chan *document.DocumentTransform
-		outputCh    chan *document.DocumentTransform
+		ctx           context.Context
+		cancelFunc    context.CancelFunc
+		wg            *sync.WaitGroup
+		store         DocumentManagerStore
+		sourceType    string
+		destType      string
+		source        document.DocumentStorage
+		destination   document.DocumentStorage
+		processors    []document.DocumentProcessor
+		postProcessor document.DocumentPostProcessor
+		inputCh       chan *document.DocumentTransform
+		outputCh      chan *document.DocumentTransform
 	}
 )

@@ -1,5 +1,7 @@
 {
   "source_store": "Google Drive",
   "dest_store": "Local",
-  "origin_patterns": ["localhost:3000", "http://localhost:3000"]
+  "origin_patterns": ["localhost:3000", "http://localhost:3000"],
+  "attachments_location": "",
+  "notes_location": ""
 }

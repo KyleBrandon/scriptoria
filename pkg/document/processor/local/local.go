@@ -2,7 +2,6 @@ package local
 
 import (
 	"context"
-	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -15,16 +14,17 @@ import (
 type documentStore interface{}
 
 type LocalDocumentProcessor struct {
-	store         documentStore
-	ctx           context.Context
-	localFilePath string
-	fullFilePath  string
-	inputCh       chan *document.DocumentTransform
-	outputCh      chan *document.DocumentTransform
+	store           documentStore
+	ctx             context.Context
+	destinationPath string
+	inputCh         chan *document.DocumentTransform
+	outputCh        chan *document.DocumentTransform
 }
 
-func New(store documentStore) *LocalDocumentProcessor {
+func New(store documentStore, localStoragePath string) *LocalDocumentProcessor {
 	lp := &LocalDocumentProcessor{}
+	lp.store = store
+	lp.destinationPath = localStoragePath
 
 	return lp
 }
@@ -36,11 +36,6 @@ func (lp *LocalDocumentProcessor) Initialize(ctx context.Context, inputCh chan *
 	lp.ctx = ctx
 	lp.inputCh = inputCh
 	lp.outputCh = make(chan *document.DocumentTransform)
-
-	err := lp.readConfigurationSettings()
-	if err != nil {
-		return nil, err
-	}
 
 	go lp.process()
 
@@ -68,13 +63,15 @@ func (lp *LocalDocumentProcessor) processDocument(t *document.DocumentTransform)
 	slog.Debug(">>LocalDocumentProcessor.processDocument")
 	defer slog.Debug("<<LocalDocumentProcessor.processDocument")
 
+	defer t.Reader.Close()
+
 	output := document.DocumentTransform{}
 
 	// build a local file path
-	lp.fullFilePath = filepath.Join(lp.localFilePath, t.Doc.Name)
+	fullFilePath := filepath.Join(lp.destinationPath, t.Doc.Name)
 
 	// create the local file to save the document to
-	file, err := os.Create(lp.fullFilePath)
+	file, err := os.Create(fullFilePath)
 	if err != nil {
 		output.Error = err
 		lp.outputCh <- &output
@@ -92,7 +89,7 @@ func (lp *LocalDocumentProcessor) processDocument(t *document.DocumentTransform)
 	}
 
 	// open the newly created file for the reader
-	file, err = os.Open(lp.fullFilePath)
+	file, err = os.Open(fullFilePath)
 	if err != nil {
 		output.Error = err
 		lp.outputCh <- &output
@@ -110,13 +107,4 @@ func (lp *LocalDocumentProcessor) processDocument(t *document.DocumentTransform)
 	output.Reader = file
 
 	lp.outputCh <- &output
-}
-
-func (lp *LocalDocumentProcessor) readConfigurationSettings() error {
-	lp.localFilePath = os.Getenv("LOCAL_STORAGE_PATH")
-	if len(lp.localFilePath) == 0 {
-		return errors.New("environment variable LOCAL_STORAGE_PATH is not present")
-	}
-
-	return nil
 }

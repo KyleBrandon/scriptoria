@@ -9,7 +9,7 @@ import (
 	"github.com/KyleBrandon/scriptoria/pkg/document"
 )
 
-func New(ctx context.Context, queries *database.Queries, source, destination document.DocumentStorage, processors []document.DocumentProcessor) (*DocumentManager, error) {
+func New(ctx context.Context, queries *database.Queries, source document.DocumentStorage, processors []document.DocumentProcessor, postProcessor document.DocumentPostProcessor) (*DocumentManager, error) {
 	slog.Debug(">>InitializeDocumentManager")
 	defer slog.Debug("<<InitializeDocumentManager")
 
@@ -19,26 +19,19 @@ func New(ctx context.Context, queries *database.Queries, source, destination doc
 	// create the DocumentMangaer and initialize it
 	var wg sync.WaitGroup
 	dm := &DocumentManager{
-		ctx:         mgrCtx,
-		wg:          &wg,
-		cancelFunc:  mgrCanceFunc,
-		store:       queries,
-		source:      source,
-		destination: destination,
-		processors:  processors,
+		ctx:           mgrCtx,
+		wg:            &wg,
+		cancelFunc:    mgrCanceFunc,
+		store:         queries,
+		source:        source,
+		processors:    processors,
+		postProcessor: postProcessor,
 	}
 
 	// initialize the source storage
 	err := dm.source.Initialize(dm.ctx)
 	if err != nil {
 		slog.Error("Failed to initialize the source storage", "error", err)
-		return nil, err
-	}
-
-	// initialize the dest storage
-	err = destination.Initialize(dm.ctx)
-	if err != nil {
-		slog.Error("Failed to initialize the destination storage", "error", err)
 		return nil, err
 	}
 
@@ -59,6 +52,11 @@ func New(ctx context.Context, queries *database.Queries, source, destination doc
 	// output processor channel is the last input
 	dm.outputCh = inputCh
 
+	err = dm.postProcessor.Initialize(dm.ctx)
+	if err != nil {
+		slog.Error("Failed to initialize the post processor")
+	}
+
 	return dm, nil
 }
 
@@ -78,8 +76,8 @@ func (dm *DocumentManager) StartMonitoring() {
 }
 
 func (dm *DocumentManager) documentStorageMonitor() {
-	slog.Info(">>documentStorageMonitor")
-	defer slog.Info("<<documentStorageMonitor")
+	slog.Debug(">>documentStorageMonitor")
+	defer slog.Debug("<<documentStorageMonitor")
 
 	// start watching the source for new files
 	docCh, err := dm.source.StartWatching()
@@ -135,9 +133,11 @@ func (dm *DocumentManager) processDocument(srcDoc *document.Document, srcStorage
 	outputTransform := <-dm.outputCh
 	if outputTransform.Error != nil {
 		slog.Error("Document processing failed", "error", err)
-	} else {
-		outputTransform.Reader.Close()
+		return
+	}
 
-		slog.Info("Document processing succeeded")
+	err = dm.postProcessor.Process(srcDoc, outputTransform)
+	if err != nil {
+		return
 	}
 }

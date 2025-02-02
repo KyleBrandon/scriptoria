@@ -71,6 +71,8 @@ func (cp *ChatgptDocumentProcessor) processDocument(t *document.DocumentTransfor
 	slog.Debug("ChatgptDocumentProcessor.processDocument")
 	defer slog.Debug("ChatgptDocumentProcessor.processDocument")
 
+	defer t.Reader.Close()
+
 	output := document.DocumentTransform{}
 
 	// Initialize OpenAI client

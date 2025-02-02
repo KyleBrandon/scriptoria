@@ -6,14 +6,6 @@ import (
 	"github.com/KyleBrandon/scriptoria/pkg/document"
 )
 
-// Mathpix API endpoint
-const (
-	MathpixPdfApiURL = "https://api.mathpix.com/v3/pdf"
-)
-
-// Polling interval (seconds)
-const MathpixPollInterval = 5
-
 type (
 
 	// Identify the database methos for the Mathpix processor

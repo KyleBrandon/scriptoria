@@ -65,6 +65,8 @@ func (mp *MathpixDocumentProcessor) processDocument(t *document.DocumentTransfor
 	slog.Debug(">>MathpixDocumentProcessor.processDocument")
 	defer slog.Debug("<<MathpixDocumentProcessor.processDocument")
 
+	defer t.Reader.Close()
+
 	output := document.DocumentTransform{}
 
 	// Upload PDF to Mathpix

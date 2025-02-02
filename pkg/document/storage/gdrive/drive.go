@@ -223,7 +223,7 @@ func (gd *GDriveStorageContext) createWatchChannel() error {
 	}
 
 	if !createChannel {
-		slog.Info("Use existing watch channel")
+		slog.Debug("Use existing watch channel")
 		gd.channelID = watch.ChannelID
 		gd.expiration = watch.ExpiresAt
 

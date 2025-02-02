@@ -27,6 +27,11 @@ type (
 		Initialize(ctx context.Context, inputCh chan *DocumentTransform) (chan *DocumentTransform, error)
 	}
 
+	DocumentPostProcessor interface {
+		Initialize(ctx context.Context) error
+		Process(srcDoc *Document, outputTransform *DocumentTransform) error
+	}
+
 	DocumentStorage interface {
 		Initialize(ctx context.Context) error
 		StartWatching() (chan *Document, error)
