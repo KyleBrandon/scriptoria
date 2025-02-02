@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/KyleBrandon/scriptoria/pkg/document"
@@ -16,6 +17,8 @@ type documentStore interface{}
 type LocalDocumentProcessor struct {
 	store           documentStore
 	ctx             context.Context
+	cancelFunc      context.CancelFunc
+	wg              *sync.WaitGroup
 	destinationPath string
 	inputCh         chan *document.DocumentTransform
 	outputCh        chan *document.DocumentTransform
@@ -33,13 +36,20 @@ func (lp *LocalDocumentProcessor) Initialize(ctx context.Context, inputCh chan *
 	slog.Debug(">>LocalDocumentProcessor.Initialize")
 	defer slog.Debug("<<LocalDocumentProcessor.Initialize")
 
-	lp.ctx = ctx
+	lp.ctx, lp.cancelFunc = context.WithCancel(ctx)
+	lp.wg = &sync.WaitGroup{}
 	lp.inputCh = inputCh
 	lp.outputCh = make(chan *document.DocumentTransform)
 
 	go lp.process()
 
 	return lp.outputCh, nil
+}
+
+func (lp *LocalDocumentProcessor) CancelAndWait() {
+	lp.cancelFunc()
+
+	lp.wg.Wait()
 }
 
 func (lp *LocalDocumentProcessor) process() {
@@ -54,6 +64,7 @@ func (lp *LocalDocumentProcessor) process() {
 
 		case t := <-lp.inputCh:
 			slog.Debug("LocalDocumentProcessor.process received input")
+			lp.wg.Add(1)
 			go lp.processDocument(t)
 		}
 	}
@@ -62,6 +73,8 @@ func (lp *LocalDocumentProcessor) process() {
 func (lp *LocalDocumentProcessor) processDocument(t *document.DocumentTransform) {
 	slog.Debug(">>LocalDocumentProcessor.processDocument")
 	defer slog.Debug("<<LocalDocumentProcessor.processDocument")
+
+	defer lp.wg.Done()
 
 	defer t.Reader.Close()
 

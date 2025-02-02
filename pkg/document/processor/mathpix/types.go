@@ -2,6 +2,7 @@ package mathpix
 
 import (
 	"context"
+	"sync"
 
 	"github.com/KyleBrandon/scriptoria/pkg/document"
 )
@@ -15,10 +16,16 @@ const (
 const MathpixPollInterval = 5
 
 type (
+	MathpixErrorInfo struct {
+		ID      string `json:"id,omitempty"`
+		Message string `json:"message,omitempty"`
+	}
 
 	// UploadResponse represents the initial response from Mathpix after uploading a PDF
 	UploadResponse struct {
-		PdfID string `json:"pdf_id"`
+		PdfID     string           `json:"pdf_id"`
+		Error     string           `json:"error,omitempty"`
+		ErrorInfo MathpixErrorInfo `json:"error_info,omitempty"`
 	}
 
 	// PollResponse represents the response when polling for PDF processing results
@@ -35,9 +42,11 @@ type (
 		mathpixAppID  string
 		mathpixAppKey string
 
-		ctx      context.Context
-		store    mathpixDocumentStore
-		inputCh  chan *document.DocumentTransform
-		outputCh chan *document.DocumentTransform
+		ctx        context.Context
+		cancelFunc context.CancelFunc
+		wg         *sync.WaitGroup
+		store      mathpixDocumentStore
+		inputCh    chan *document.DocumentTransform
+		outputCh   chan *document.DocumentTransform
 	}
 )

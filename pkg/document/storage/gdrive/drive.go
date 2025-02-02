@@ -119,7 +119,8 @@ func (gd *GDriveStorageContext) QueryFiles() {
 }
 
 // Write the given file to the storage
-func (gd *GDriveStorageContext) Write(srcDoc *document.Document, reader io.Reader) (*document.Document, error) {
+func (gd *GDriveStorageContext) Write(srcDoc *document.Document, reader io.ReadCloser) (*document.Document, error) {
+	defer reader.Close()
 	return &document.Document{}, errors.ErrUnsupported
 }
 

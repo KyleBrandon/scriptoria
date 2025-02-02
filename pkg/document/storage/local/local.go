@@ -51,7 +51,9 @@ func (ld *LocalStorageContext) GetDocumentReader(document *document.Document) (i
 	return file, nil
 }
 
-func (ld *LocalStorageContext) Write(srcDoc *document.Document, reader io.Reader) (*document.Document, error) {
+func (ld *LocalStorageContext) Write(srcDoc *document.Document, reader io.ReadCloser) (*document.Document, error) {
+	defer reader.Close()
+
 	filePath := filepath.Join(ld.localFilePath, srcDoc.Name)
 
 	// Create output file

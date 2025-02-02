@@ -39,7 +39,7 @@ func New(ctx context.Context, queries *database.Queries, source document.Documen
 	inputCh := dm.inputCh
 
 	// loop through the processors and initialize them by chaining their channels
-	for _, p := range processors {
+	for _, p := range dm.processors {
 		outputCh, err := p.Initialize(dm.ctx, inputCh)
 		if err != nil {
 			slog.Error("Failed to initialize the document processor", "error", err)
@@ -63,6 +63,11 @@ func New(ctx context.Context, queries *database.Queries, source document.Documen
 func (dm *DocumentManager) CancelAndWait() {
 	// cancel all go routines
 	dm.cancelFunc()
+
+	// cancel all the processors
+	for _, p := range dm.processors {
+		p.CancelAndWait()
+	}
 
 	// wait until the document go routines are finished
 	dm.wg.Wait()
@@ -116,7 +121,6 @@ func (dm *DocumentManager) processDocument(srcDoc *document.Document, srcStorage
 		return
 	}
 
-	dm.wg.Add(1)
 	reader, err := srcStorage.GetDocumentReader(srcDoc)
 	if err != nil {
 		slog.Error("Failed to get the document reader", "error", err)

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/KyleBrandon/scriptoria/pkg/document"
@@ -27,7 +28,8 @@ func (cp *ChatgptDocumentProcessor) Initialize(ctx context.Context, inputCh chan
 	slog.Debug(">>ChatgptDocumentProcessor.Initialize")
 	defer slog.Debug("<<ChatgptDocumentProcessor.Initialize")
 
-	cp.ctx = ctx
+	cp.ctx, cp.cancelFunc = context.WithCancel(ctx)
+	cp.wg = &sync.WaitGroup{}
 	cp.inputCh = inputCh
 	cp.outputCh = make(chan *document.DocumentTransform)
 
@@ -36,9 +38,15 @@ func (cp *ChatgptDocumentProcessor) Initialize(ctx context.Context, inputCh chan
 		return nil, err
 	}
 
+	cp.wg.Add(1)
 	go cp.process()
 
 	return cp.outputCh, nil
+}
+
+func (cp *ChatgptDocumentProcessor) CancelAndWait() {
+	cp.cancelFunc()
+	cp.wg.Wait()
 }
 
 func (cp *ChatgptDocumentProcessor) readConfigurationSettings() error {
@@ -54,6 +62,8 @@ func (cp *ChatgptDocumentProcessor) process() {
 	slog.Debug(">>ChatgptDocumentProcessor.process")
 	defer slog.Debug("<<ChatgptDocumentProcessor.process")
 
+	defer cp.wg.Done()
+
 	for {
 		select {
 		case <-cp.ctx.Done():
@@ -62,6 +72,11 @@ func (cp *ChatgptDocumentProcessor) process() {
 
 		case t := <-cp.inputCh:
 			slog.Debug("MathMathpixDocumentProcessor.process received document to process")
+			if t.Error != nil {
+				continue
+			}
+
+			cp.wg.Add(1)
 			go cp.processDocument(t)
 		}
 	}
@@ -70,6 +85,8 @@ func (cp *ChatgptDocumentProcessor) process() {
 func (cp *ChatgptDocumentProcessor) processDocument(t *document.DocumentTransform) {
 	slog.Debug("ChatgptDocumentProcessor.processDocument")
 	defer slog.Debug("ChatgptDocumentProcessor.processDocument")
+
+	defer cp.wg.Done()
 
 	defer t.Reader.Close()
 
@@ -89,7 +106,7 @@ func (cp *ChatgptDocumentProcessor) processDocument(t *document.DocumentTransfor
 	systemMessage := "You are an AI that processes Markdown text. Your task is to clean up the input by fixing Markdown syntax, correcting spelling and grammar, and ensuring proper formatting. Do NOT include any extra explanations, comments, or surrounding text—only return the valid Markdown output."
 
 	// Create a prompt for GPT to clean up the Markdown
-	prompt := fmt.Sprintf("Here is a Markdown file that was generated via OCR. Fix the Markdown formatting, correct any spelling and grammar errors, and ensure the syntax is valid. Do not add any explanations or comments—only return the cleaned Markdown content:\n\n%s", content)
+	prompt := fmt.Sprintf("Here is a Markdown file that was generated via OCR. Fix the Markdown formatting, correct any spelling and grammar errors, and ensure the syntax is valid. Do not add any explanations,comments, and do not surround the document text in a markdown code block. ONLY RETURN THE CLEANED MARKDOWN CONTENT AND NOTHING ELSE:\n\n%s", content)
 
 	// Call the ChatGPT API
 	resp, err := client.CreateChatCompletion(

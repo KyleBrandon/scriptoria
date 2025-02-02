@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/KyleBrandon/scriptoria/pkg/document"
@@ -30,7 +31,8 @@ func (mp *MathpixDocumentProcessor) Initialize(ctx context.Context, inputCh chan
 	slog.Debug(">>MathpixDocumentProcessor.Initialize")
 	defer slog.Debug("<<MathpixDocumentProcessor.Initialize")
 
-	mp.ctx = ctx
+	mp.ctx, mp.cancelFunc = context.WithCancel(ctx)
+	mp.wg = &sync.WaitGroup{}
 	mp.inputCh = inputCh
 	mp.outputCh = make(chan *document.DocumentTransform)
 
@@ -39,14 +41,22 @@ func (mp *MathpixDocumentProcessor) Initialize(ctx context.Context, inputCh chan
 		return nil, err
 	}
 
+	mp.wg.Add(1)
 	go mp.process()
 
 	return mp.outputCh, nil
 }
 
+func (mp *MathpixDocumentProcessor) CancelAndWait() {
+	mp.cancelFunc()
+	mp.wg.Wait()
+}
+
 func (mp *MathpixDocumentProcessor) process() {
 	slog.Debug(">>MathpixDocumentProcessor.process")
 	defer slog.Debug("<<MathpixDocumentProcessor.process")
+
+	defer mp.wg.Done()
 
 	for {
 		select {
@@ -56,6 +66,11 @@ func (mp *MathpixDocumentProcessor) process() {
 
 		case t := <-mp.inputCh:
 			slog.Debug("MathMathpixDocumentProcessor.process received document to process")
+			if t.Error != nil {
+				continue
+			}
+
+			mp.wg.Add(1)
 			go mp.processDocument(t)
 		}
 	}
@@ -65,6 +80,7 @@ func (mp *MathpixDocumentProcessor) processDocument(t *document.DocumentTransfor
 	slog.Debug(">>MathpixDocumentProcessor.processDocument")
 	defer slog.Debug("<<MathpixDocumentProcessor.processDocument")
 
+	mp.wg.Done()
 	defer t.Reader.Close()
 
 	output := document.DocumentTransform{}
@@ -172,24 +188,29 @@ func (mp *MathpixDocumentProcessor) sendDocumentToMathpix(name string, reader io
 		return "", err
 	}
 
+	if len(uploadResp.Error) != 0 {
+		return "", fmt.Errorf("mathpix error: %s, ErrorInfo.ID=%s, ErrorInfo.Message=%s", uploadResp.Error, uploadResp.ErrorInfo.ID, uploadResp.ErrorInfo.Message)
+	}
+
 	return uploadResp.PdfID, nil
 }
 
 // PollForResults polls Mathpix API for PDF processing status
 func (mp *MathpixDocumentProcessor) pollForResults(pdfID string) error {
-	slog.Debug(">>PollForResults")
+	slog.Debug(">>PollForResults", "pdfID", pdfID)
 	defer slog.Debug("<<PollForResults")
 
 	pollURL := fmt.Sprintf("%s/%s", MathpixPdfApiURL, pdfID)
 
+	// TODO: This would run forever
 	for {
 		req, err := mp.newRequest("GET", pollURL, nil)
 		if err != nil {
-			slog.Error("Failed to crate GET request for mathpix document status", "error", err)
+			slog.Error("Failed to create GET request for mathpix document status", "error", err)
 			return err
 		}
 
-		respBody, err := mp.doRequest(req)
+		bodyContents, err := mp.doRequest(req)
 		if err != nil {
 			slog.Error("Failed to send GET request for mathpix documetn status", "error", err)
 			return err
@@ -197,9 +218,9 @@ func (mp *MathpixDocumentProcessor) pollForResults(pdfID string) error {
 
 		// Parse JSON
 		var pollResp PollResponse
-		err = json.Unmarshal(respBody, &pollResp)
+		err = json.Unmarshal(bodyContents, &pollResp)
 		if err != nil {
-			slog.Error("Failed to unmarshal mathpix document status", "body", string(respBody), "error", err)
+			slog.Error("Failed to unmarshal mathpix document status", "body", string(bodyContents), "error", err)
 			return err
 		}
 
@@ -229,13 +250,13 @@ func (mp *MathpixDocumentProcessor) queryConversionResults(pdfID string) (string
 		return "", err
 	}
 
-	respBody, err := mp.doRequest(req)
+	bodyContents, err := mp.doRequest(req)
 	if err != nil {
 		slog.Error("Failed to send GET request for mathpix documetn status", "error", err)
 		return "", err
 	}
 
-	return string(respBody), nil
+	return string(bodyContents), nil
 }
 
 func (mp *MathpixDocumentProcessor) newRequest(method string, url string, body io.Reader) (*http.Request, error) {
@@ -258,6 +279,10 @@ func (mp *MathpixDocumentProcessor) doRequest(req *http.Request) ([]byte, error)
 		return nil, err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode > 299 {
+		return nil, fmt.Errorf("request failed with status_code=%d and status=%s", resp.StatusCode, resp.Status)
+	}
 
 	// Parse response
 	respBody, err := io.ReadAll(resp.Body)
