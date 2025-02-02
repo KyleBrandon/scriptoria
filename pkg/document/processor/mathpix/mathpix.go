@@ -80,17 +80,15 @@ func (mp *MathpixDocumentProcessor) processDocument(t *document.DocumentTransfor
 	slog.Debug(">>MathpixDocumentProcessor.processDocument")
 	defer slog.Debug("<<MathpixDocumentProcessor.processDocument")
 
-	mp.wg.Done()
+	defer mp.wg.Done()
 	defer t.Reader.Close()
 
-	output := document.DocumentTransform{}
-
 	// Upload PDF to Mathpix
-	pdfID, err := mp.sendDocumentToMathpix(t.Doc.Name, t.Reader)
+	pdfID, err := mp.sendDocumentToMathpix(t.SourceName, t.Reader)
 	if err != nil {
 		slog.Error("Error uploading PDF", "error", err)
-		output.Error = err
-		mp.outputCh <- &output
+		t.Error = err
+		mp.outputCh <- t
 		return
 
 	}
@@ -99,31 +97,22 @@ func (mp *MathpixDocumentProcessor) processDocument(t *document.DocumentTransfor
 	err = mp.pollForResults(pdfID)
 	if err != nil {
 		slog.Error("Error getting results", "error", err)
-		output.Error = err
-		mp.outputCh <- &output
+		t.Error = err
+		mp.outputCh <- t
 		return
 	}
 
 	markdownText, err := mp.queryConversionResults(pdfID)
 	if err != nil {
 		slog.Error("Failed to query conversion results", "error", err)
-		output.Error = err
-		mp.outputCh <- &output
+		t.Error = err
+		mp.outputCh <- t
 		return
 	}
 
-	name := t.Doc.GetDocumentName() + ".mmd"
-
-	// create an output document that represents the multi-markdown file
-	output.Doc = &document.Document{
-		Name:         name,
-		MimeType:     "text/markdown",
-		CreatedTime:  time.Now(),
-		ModifiedTime: time.Now(),
-	}
-
-	output.Reader = io.NopCloser(strings.NewReader(markdownText))
-	mp.outputCh <- &output
+	// set the new reader
+	t.Reader = io.NopCloser(strings.NewReader(markdownText))
+	mp.outputCh <- t
 }
 
 // Initialize environment variables

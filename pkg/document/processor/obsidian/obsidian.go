@@ -29,16 +29,17 @@ func (op *ObsidianDocumentPostProcessor) Initialize(ctx context.Context) error {
 	return nil
 }
 
-func (op *ObsidianDocumentPostProcessor) Process(srcDoc *document.Document, outputTransform *document.DocumentTransform) error {
-	defer outputTransform.Reader.Close()
+func (op *ObsidianDocumentPostProcessor) Process(t *document.DocumentTransform) error {
+	slog.Debug(">>Obsidian.Process")
+	defer slog.Debug("<<Obsidian.Process")
 
-	err := op.saveMarkdownNote(srcDoc, outputTransform)
+	err := op.saveMarkdownNote(t)
 	if err != nil {
 		return err
 	}
 
 	// write the original pdf to the attachments
-	err = op.copyAttachment(srcDoc)
+	err = op.copyAttachment(t)
 	if err != nil {
 		return err
 	}
@@ -46,8 +47,10 @@ func (op *ObsidianDocumentPostProcessor) Process(srcDoc *document.Document, outp
 	return nil
 }
 
-func (op *ObsidianDocumentPostProcessor) saveMarkdownNote(srcDoc *document.Document, outputTransform *document.DocumentTransform) error {
-	buffer, err := io.ReadAll(outputTransform.Reader)
+func (op *ObsidianDocumentPostProcessor) saveMarkdownNote(t *document.DocumentTransform) error {
+	defer t.Reader.Close()
+
+	buffer, err := io.ReadAll(t.Reader)
 	if err != nil {
 		slog.Error("Failed to read the output transform", "error", err)
 		return err
@@ -56,11 +59,14 @@ func (op *ObsidianDocumentPostProcessor) saveMarkdownNote(srcDoc *document.Docum
 	// Check to see if the document is surrounded in a "markdown" code block.  If so, remove it.
 	markdownDocument := strings.TrimPrefix(strings.TrimSuffix(string(buffer), "```"), "```markdown")
 
-	output := fmt.Sprintf("%s\n\n![[%s]]", markdownDocument, srcDoc.Name)
+	output := fmt.Sprintf("%s\n\n![[%s]]", markdownDocument, t.SourceName)
 
 	// write the output to the notes.
 
-	filePath := filepath.Join(op.notesFolder, outputTransform.Doc.Name)
+	name := strings.TrimSuffix(t.SourceName, filepath.Ext(t.SourceName))
+	name = fmt.Sprintf("%s.md", name)
+
+	filePath := filepath.Join(op.notesFolder, name)
 	file, err := os.Create(filePath)
 	if err != nil {
 		slog.Error("Failed to create the notes file", "filePath", filePath, "error", err)
@@ -78,9 +84,9 @@ func (op *ObsidianDocumentPostProcessor) saveMarkdownNote(srcDoc *document.Docum
 	return nil
 }
 
-func (op *ObsidianDocumentPostProcessor) copyAttachment(srcDoc *document.Document) error {
-	srcPath := filepath.Join(op.localStoragePath, srcDoc.Name)
-	destPath := filepath.Join(op.attachmentsFolder, srcDoc.Name)
+func (op *ObsidianDocumentPostProcessor) copyAttachment(t *document.DocumentTransform) error {
+	srcPath := filepath.Join(op.localStoragePath, t.SourceName)
+	destPath := filepath.Join(op.attachmentsFolder, t.SourceName)
 
 	// Copy the original document to the attachements folder
 	err := CopyFile(srcPath, destPath)

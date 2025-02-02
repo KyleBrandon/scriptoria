@@ -9,7 +9,6 @@ import (
 	"os"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/KyleBrandon/scriptoria/pkg/document"
 	"github.com/sashabaranov/go-openai"
@@ -83,14 +82,10 @@ func (cp *ChatgptDocumentProcessor) process() {
 }
 
 func (cp *ChatgptDocumentProcessor) processDocument(t *document.DocumentTransform) {
-	slog.Debug("ChatgptDocumentProcessor.processDocument")
-	defer slog.Debug("ChatgptDocumentProcessor.processDocument")
+	slog.Debug(">>ChatgptDocumentProcessor.processDocument")
+	defer slog.Debug("<<ChatgptDocumentProcessor.processDocument")
 
 	defer cp.wg.Done()
-
-	defer t.Reader.Close()
-
-	output := document.DocumentTransform{}
 
 	// Initialize OpenAI client
 	client := openai.NewClient(cp.chatgptAPIKey)
@@ -98,14 +93,16 @@ func (cp *ChatgptDocumentProcessor) processDocument(t *document.DocumentTransfor
 	content, err := io.ReadAll(t.Reader)
 	if err != err {
 		slog.Error("Failed to read the input document to clean up", "error", err)
-		output.Error = err
-		cp.outputCh <- &output
+		t.Reader.Close()
+		t.Error = err
+		cp.outputCh <- t
 		return
 	}
 
-	systemMessage := "You are an AI that processes Markdown text. Your task is to clean up the input by fixing Markdown syntax, correcting spelling and grammar, and ensuring proper formatting. Do NOT include any extra explanations, comments, or surrounding text—only return the valid Markdown output."
+	t.Reader.Close()
 
 	// Create a prompt for GPT to clean up the Markdown
+	systemMessage := "You are an AI that processes Markdown text. Your task is to clean up the input by fixing Markdown syntax, correcting spelling and grammar, and ensuring proper formatting. Do NOT include any extra explanations, comments, or surrounding text—only return the valid Markdown output."
 	prompt := fmt.Sprintf("Here is a Markdown file that was generated via OCR. Fix the Markdown formatting, correct any spelling and grammar errors, and ensure the syntax is valid. Do not add any explanations,comments, and do not surround the document text in a markdown code block. ONLY RETURN THE CLEANED MARKDOWN CONTENT AND NOTHING ELSE:\n\n%s", content)
 
 	// Call the ChatGPT API
@@ -122,21 +119,15 @@ func (cp *ChatgptDocumentProcessor) processDocument(t *document.DocumentTransfor
 	)
 	if err != nil {
 		slog.Error("ChatGPT API error", "error", err)
-		output.Error = err
-		cp.outputCh <- &output
+		t.Error = err
+		cp.outputCh <- t
 		return
 	}
 
 	// Get the cleaned-up text
 	cleanedMarkdown := resp.Choices[0].Message.Content
-	name := t.Doc.GetDocumentName() + ".md"
-	output.Doc = &document.Document{
-		Name:         name,
-		MimeType:     "text/markdown",
-		CreatedTime:  time.Now(),
-		ModifiedTime: time.Now(),
-	}
 
-	output.Reader = io.NopCloser(strings.NewReader(cleanedMarkdown))
-	cp.outputCh <- &output
+	// set the new reader
+	t.Reader = io.NopCloser(strings.NewReader(cleanedMarkdown))
+	cp.outputCh <- t
 }

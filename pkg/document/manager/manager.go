@@ -129,8 +129,8 @@ func (dm *DocumentManager) processDocument(srcDoc *document.Document, srcStorage
 	defer reader.Close()
 
 	dm.inputCh <- &document.DocumentTransform{
-		Doc:    srcDoc,
-		Reader: reader,
+		SourceName: srcDoc.Name,
+		Reader:     reader,
 	}
 
 	// wait on output
@@ -140,7 +140,7 @@ func (dm *DocumentManager) processDocument(srcDoc *document.Document, srcStorage
 		return
 	}
 
-	err = dm.postProcessor.Process(srcDoc, outputTransform)
+	err = dm.postProcessor.Process(outputTransform)
 	if err != nil {
 		return
 	}

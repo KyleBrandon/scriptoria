@@ -23,9 +23,9 @@ type (
 	//      Input PDF
 	//      Output Markdown
 	DocumentTransform struct {
-		Doc    *Document     // Represents the current Document state for the transform.
-		Reader io.ReadCloser // Reader for the current Document representation.
-		Error  error         // Error of the transformation output.
+		SourceName string
+		Reader     io.ReadCloser // Reader for the current Document representation.
+		Error      error         // Error of the transformation output.
 	}
 
 	// DocumentProcessor is an interface to define the processing of a document.  Implementations
@@ -48,7 +48,7 @@ type (
 		// Initialize the DocumentPostProcessor
 		Initialize(ctx context.Context) error
 		// Process will peroform any needed processing on the source and output.
-		Process(srcDoc *Document, outputTransform *DocumentTransform) error
+		Process(outputTransform *DocumentTransform) error
 	}
 
 	// DocumentStorage represents where a Document will be read from and to.

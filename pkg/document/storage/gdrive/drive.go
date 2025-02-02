@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/KyleBrandon/scriptoria/internal/database"
@@ -26,6 +27,7 @@ func New(store GoogleDriveStore, mux *http.ServeMux) *GDriveStorageContext {
 
 	drive.store = store
 	drive.mux = mux
+	drive.wg = &sync.WaitGroup{}
 
 	return drive
 }
@@ -37,7 +39,7 @@ func (gd *GDriveStorageContext) Initialize(ctx context.Context) error {
 
 	gd.documents = make(chan *document.Document, 10)
 
-	gd.ctx = ctx
+	gd.ctx, gd.cancelFunc = context.WithCancel(ctx)
 	err := gd.readConfigurationSettings()
 	if err != nil {
 		return err
@@ -67,6 +69,7 @@ func (gd *GDriveStorageContext) StartWatching() (chan *document.Document, error)
 	}
 
 	// Do an initial query of the files that are in the folder
+	gd.wg.Add(1)
 	go gd.QueryFiles()
 
 	return gd.documents, nil
@@ -77,6 +80,8 @@ func (gd *GDriveStorageContext) StartWatching() (chan *document.Document, error)
 func (gd *GDriveStorageContext) QueryFiles() {
 	slog.Debug(">>GoogleDrive.checkForNewOrModifiedFiles")
 	defer slog.Debug("<<GoogleDrive.checkForNewOrModifiedFiles")
+
+	defer gd.wg.Done()
 
 	// build the query string to find the new fines in Google Drive
 	query := gd.buildFileSearchQuery()
@@ -287,7 +292,8 @@ func (gd *GDriveStorageContext) webhookHandler(w http.ResponseWriter, r *http.Re
 	}
 
 	// Check for new or modified files
-	gd.QueryFiles()
+	gd.wg.Add(1)
+	go gd.QueryFiles()
 
 	// check if the watch channel should be renewed
 	gd.renewWatchChannelIfNeeded()

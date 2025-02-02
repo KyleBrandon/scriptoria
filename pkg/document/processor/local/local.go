@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"github.com/KyleBrandon/scriptoria/pkg/document"
 )
@@ -76,19 +75,44 @@ func (lp *LocalDocumentProcessor) processDocument(t *document.DocumentTransform)
 
 	defer lp.wg.Done()
 
-	defer t.Reader.Close()
+	// if there's an error pass it through
+	if t.Error != nil {
+		t.Reader.Close()
+		lp.outputCh <- t
+		return
 
-	output := document.DocumentTransform{}
+	}
 
 	// build a local file path
-	fullFilePath := filepath.Join(lp.destinationPath, t.Doc.Name)
+	fullFilePath := filepath.Join(lp.destinationPath, t.SourceName)
+	err := lp.copyFile(fullFilePath, t)
+	if err != nil {
+		t.Error = err
+		lp.outputCh <- t
+		return
+	}
+
+	// open the newly created file for the reader
+	file, err := os.Open(fullFilePath)
+	if err != nil {
+		t.Error = err
+		lp.outputCh <- t
+		return
+	}
+
+	// set the new transform reader
+	t.Reader = file
+
+	lp.outputCh <- t
+}
+
+func (lp *LocalDocumentProcessor) copyFile(fullFilePath string, t *document.DocumentTransform) error {
+	defer t.Reader.Close()
 
 	// create the local file to save the document to
 	file, err := os.Create(fullFilePath)
 	if err != nil {
-		output.Error = err
-		lp.outputCh <- &output
-		return
+		return err
 	}
 
 	defer file.Close()
@@ -96,28 +120,9 @@ func (lp *LocalDocumentProcessor) processDocument(t *document.DocumentTransform)
 	// copy the document to the local file
 	_, err = io.Copy(file, t.Reader)
 	if err != nil {
-		output.Error = err
-		lp.outputCh <- &output
-		return
+		t.Error = err
+		return err
 	}
 
-	// open the newly created file for the reader
-	file, err = os.Open(fullFilePath)
-	if err != nil {
-		output.Error = err
-		lp.outputCh <- &output
-		return
-	}
-
-	// output document is largely the same as the input
-	output.Doc = &document.Document{
-		Name:         t.Doc.Name,
-		MimeType:     t.Doc.MimeType,
-		CreatedTime:  time.Now(),
-		ModifiedTime: time.Now(),
-	}
-
-	output.Reader = file
-
-	lp.outputCh <- &output
+	return nil
 }
