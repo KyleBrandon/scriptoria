@@ -12,6 +12,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/KyleBrandon/scriptoria/pkg/document"
 )
 
 // NewMathpixProcessor will create a document processor to send to the Mathix PDF API to get a Markdown version of the document.
@@ -35,9 +37,11 @@ func (mp *MathpixDocumentProcessor) Initialize(tempStoragePath string) error {
 	return nil
 }
 
-func (mp *MathpixDocumentProcessor) Process(sourceName string, reader io.ReadCloser) (io.ReadCloser, error) {
+func (mp *MathpixDocumentProcessor) Process(document *document.Document, reader io.ReadCloser) (io.ReadCloser, error) {
 	slog.Debug(">>MathpixDocumentProcessor.processDocument")
 	defer slog.Debug("<<MathpixDocumentProcessor.processDocument")
+
+	sourceName := document.Name
 
 	// Upload PDF to Mathpix
 	pdfID, err := mp.sendDocumentToMathpix(sourceName, reader)

@@ -9,14 +9,21 @@ import (
 
 const DefaultLogLevel = slog.LevelInfo
 
-// TODO: Update so that each storage config can have settings and add Processor configs
-type Config struct {
-	SourceStore       string `json:"source_store"`
-	AttachmentsFolder string `json:"attachments_folder"`
-	NotesFolder       string `json:"notes_folder"`
-	WorkBundleFolder  string `json:"work_bundle_folder"`
-	TempStorageFolder string `json:"temp_storage_folder"`
-}
+type (
+	StorageBundle struct {
+		SourceFolder          string `json:"source_folder"`
+		ArchiveFolder         string `json:"archive_folder"`
+		DestAttachmentsFolder string `json:"dest_attachments_folder"`
+		DestNotesFolder       string `json:"dest_notes_folder"`
+	}
+
+	// TODO: Update so that each storage config can have settings and add Processor configs
+	Config struct {
+		TempStorageFolder string          `json:"temp_storage_folder"`
+		SourceStore       string          `json:"source_store"`
+		Bundles           []StorageBundle `json:"bundles"`
+	}
+)
 
 func LoadConfigSettings(filename string) (Config, error) {
 	var config Config

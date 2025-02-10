@@ -97,7 +97,11 @@ func (q *Queries) GetDocumentById(ctx context.Context, id uuid.UUID) (Document, 
 
 const updateDocumentDestination = `-- name: UpdateDocumentDestination :one
 UPDATE documents
-SET destination_store = $2, destination_id = $3, destination_name = $4, transferred_at = $5
+SET destination_store = $2, 
+    destination_id = $3, 
+    destination_name = $4, 
+    transferred_at = $5,
+    updated_at = CURRENT_TIMESTAMP
 WHERE id = $1
 RETURNING id, created_at, updated_at, source_store, source_id, source_name, destination_store, destination_id, destination_name, transferred_at, processed_at, processing_status
 `
@@ -138,7 +142,9 @@ func (q *Queries) UpdateDocumentDestination(ctx context.Context, arg UpdateDocum
 
 const updateDocumentProcessed = `-- name: UpdateDocumentProcessed :one
 UPDATE documents
-SET processed_at = $2, processing_status = $3
+SET processed_at = $2, 
+processing_status = $3,
+    updated_at = CURRENT_TIMESTAMP
 WHERE id = $1
 RETURNING id, created_at, updated_at, source_store, source_id, source_name, destination_store, destination_id, destination_name, transferred_at, processed_at, processing_status
 `

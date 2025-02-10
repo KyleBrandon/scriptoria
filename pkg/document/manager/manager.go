@@ -30,7 +30,7 @@ func New(ctx context.Context, queries *database.Queries, config config.Config, m
 		wg:              &wg,
 		cancelCauseFunc: cancelCauseFunc,
 		store:           queries,
-		sourceType:      config.SourceStore,
+		config:          config,
 	}
 
 	// initialize the storage reader
@@ -52,14 +52,14 @@ func (dm *DocumentManager) initializeStorage(queries *database.Queries, mux *htt
 	slog.Debug(">>DocumentManager.initializeStorage")
 	defer slog.Debug("<<DocumentManager.initializeStorage")
 
-	storage, err := storage.BuildDocumentStorage(dm.sourceType, queries, mux)
+	storage, err := storage.BuildDocumentStorage(dm.config.SourceStore, queries, mux)
 	if err != nil {
 		slog.Error("Failed to initialize the source storage", "error", err)
 		return err
 	}
 
 	// initialize the source storage
-	err = storage.Initialize(dm.ctx)
+	err = storage.Initialize(dm.ctx, dm.config.Bundles)
 	if err != nil {
 		slog.Error("Failed to initialize the source storage", "error", err)
 		return err
@@ -80,8 +80,6 @@ func (dm *DocumentManager) initializeProcessors(queries *database.Queries, confi
 		CancelCauseFunc:   dm.cancelCauseFunc,
 		Store:             queries,
 		TempStorageFolder: config.TempStorageFolder,
-		AttachmentsFolder: config.AttachmentsFolder,
-		NotesFolder:       config.NotesFolder,
 	}
 
 	dm.processors = make([]*processor.ProcessorContext, 0)
@@ -89,8 +87,7 @@ func (dm *DocumentManager) initializeProcessors(queries *database.Queries, confi
 	dm.processors = append(dm.processors, processor.New(cfg, mathpix.NewMathpixProcessor()))
 	dm.processors = append(dm.processors, processor.New(cfg, chatgpt.NewChatGPTProcessor()))
 	dm.processors = append(dm.processors, processor.New(cfg, obsidian.NewObsidianProcessor()))
-	dm.processors = append(dm.processors, processor.New(cfg, processor.NewBundleProcessor(config.WorkBundleFolder, config.WorkBundleFolder)))
-	dm.processors = append(dm.processors, processor.New(cfg, processor.NewBundleProcessor(config.NotesFolder, config.AttachmentsFolder)))
+	dm.processors = append(dm.processors, processor.New(cfg, processor.NewBundleProcessor(config.Bundles)))
 
 	dm.inputCh = make(chan *document.TransformContext)
 	inputCh := dm.inputCh
@@ -142,7 +139,7 @@ func (dm *DocumentManager) documentStorageMonitor() {
 	// start watching the source for new files
 	docCh, err := dm.srcStorage.StartWatching()
 	if err != nil {
-		slog.Error("Failed to start watching on the source channel", "source", dm.sourceType, "error", err)
+		slog.Error("Failed to start watching on the source channel", "source", dm.config.SourceStore, "error", err)
 		return
 	}
 
@@ -182,8 +179,8 @@ func (dm *DocumentManager) processDocument(srcDoc *document.Document, srcStorage
 
 	// Send the document transform context to the input channel (first processor)
 	dm.inputCh <- &document.TransformContext{
-		SourceName: srcDoc.Name,
-		Reader:     inputReader,
+		Doc:    srcDoc,
+		Reader: inputReader,
 	}
 
 	// wait on output channel
@@ -197,7 +194,7 @@ func (dm *DocumentManager) processDocument(srcDoc *document.Document, srcStorage
 	// TODO: Archive file in the source storage
 	srcStorage.Archive(srcDoc)
 
-	slog.Info("Finished processing the document", "sourceName", t.SourceName)
+	slog.Info("Finished processing the document", "sourceName", t.Doc.Name)
 }
 
 func (dm *DocumentManager) createNewDocument(srcDoc *document.Document) error {
@@ -214,7 +211,7 @@ func (dm *DocumentManager) createNewDocument(srcDoc *document.Document) error {
 
 	// mark the file as having been processed
 	arg := database.CreateDocumentParams{
-		SourceStore: dm.sourceType,
+		SourceStore: dm.config.SourceStore,
 		SourceID:    srcDoc.ID,
 		SourceName:  srcDoc.Name,
 	}

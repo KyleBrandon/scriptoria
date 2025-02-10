@@ -29,7 +29,7 @@ type Processor interface {
 	Initialize(tempStoragePath string) error
 
 	// Process the document passed in the reader and return another reader with the new transformed document.
-	Process(sourceName string, reader io.ReadCloser) (io.ReadCloser, error)
+	Process(document *document.Document, reader io.ReadCloser) (io.ReadCloser, error)
 }
 
 type ProcessorContext struct {
@@ -113,7 +113,7 @@ func (pc *ProcessorContext) processWrapper(t *document.TransformContext) {
 	defer pc.wg.Done()
 	defer t.Reader.Close()
 
-	reader, err := pc.processor.Process(t.SourceName, t.Reader)
+	reader, err := pc.processor.Process(t.Doc, t.Reader)
 	if err != nil {
 		pc.cancelCauseFunc(err)
 		return

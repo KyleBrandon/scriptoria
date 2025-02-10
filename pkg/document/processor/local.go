@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+
+	"github.com/KyleBrandon/scriptoria/pkg/document"
 )
 
 type documentStore interface{}
@@ -25,12 +27,12 @@ func (lp *LocalDocumentProcessor) Initialize(tempStoragePath string) error {
 	return nil
 }
 
-func (lp *LocalDocumentProcessor) Process(sourceName string, reader io.ReadCloser) (io.ReadCloser, error) {
+func (lp *LocalDocumentProcessor) Process(document *document.Document, reader io.ReadCloser) (io.ReadCloser, error) {
 	slog.Debug(">>LocalDocumentProcessor.processDocument")
 	defer slog.Debug("<<LocalDocumentProcessor.processDocument")
 
 	// build a local file path
-	fullFilePath := filepath.Join(lp.destinationPath, sourceName)
+	fullFilePath := filepath.Join(lp.destinationPath, document.Name)
 	err := CopyFileFromReader(fullFilePath, reader)
 	if err != nil {
 		return nil, err

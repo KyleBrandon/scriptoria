@@ -6,12 +6,15 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/KyleBrandon/scriptoria/internal/config"
 )
 
 type (
 	// Document represents a document that is passed through the system for transformation.
 	Document struct {
 		ID           string    // ID of the document in the system it came from.  Can be empty for state transitions.
+		FolderID     string    // ID of the folder that the document is stored in
 		Name         string    // Name of the current document representation
 		MimeType     string    // Mime type of the document
 		CreatedTime  time.Time // Time the document was created
@@ -23,14 +26,14 @@ type (
 	//      Input PDF
 	//      Output Markdown
 	TransformContext struct {
-		SourceName string
-		Reader     io.ReadCloser // Reader for the current Document representation.
+		Doc    *Document
+		Reader io.ReadCloser // Reader for the current Document representation.
 	}
 
 	// Storage represents where a Document will be read from and to.
 	Storage interface {
 		// Initlaize the DocumentStorage
-		Initialize(ctx context.Context) error
+		Initialize(ctx context.Context, bundles []config.StorageBundle) error
 
 		// CancelAndWait for the storage to finish any work
 		CancelAndWait()

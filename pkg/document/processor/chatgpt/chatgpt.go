@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/KyleBrandon/scriptoria/pkg/document"
 	"github.com/sashabaranov/go-openai"
 )
 
@@ -38,7 +39,7 @@ func (cp *ChatgptDocumentProcessor) readConfigurationSettings() error {
 	return nil
 }
 
-func (cp *ChatgptDocumentProcessor) Process(sourceName string, reader io.ReadCloser) (io.ReadCloser, error) {
+func (cp *ChatgptDocumentProcessor) Process(document *document.Document, reader io.ReadCloser) (io.ReadCloser, error) {
 	slog.Debug(">>ChatgptDocumentProcessor.processDocument")
 	defer slog.Debug("<<ChatgptDocumentProcessor.processDocument")
 

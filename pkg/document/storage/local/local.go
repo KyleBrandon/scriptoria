@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/KyleBrandon/scriptoria/internal/config"
 	"github.com/KyleBrandon/scriptoria/pkg/document"
 )
 
@@ -20,7 +21,7 @@ func New(store LocalDriveStore) *LocalStorageContext {
 	return drive
 }
 
-func (ld *LocalStorageContext) Initialize(ctx context.Context) error {
+func (ld *LocalStorageContext) Initialize(ctx context.Context, bundles []config.StorageBundle) error {
 	ld.ctx = ctx
 	err := ld.readConfigurationSettings()
 	if err != nil {

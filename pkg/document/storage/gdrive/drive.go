@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/KyleBrandon/scriptoria/internal/config"
 	"github.com/KyleBrandon/scriptoria/internal/database"
 	"github.com/KyleBrandon/scriptoria/pkg/document"
 	"github.com/google/uuid"
@@ -37,10 +38,11 @@ func New(store GoogleDriveStore, mux *http.ServeMux) *GDriveStorageContext {
 }
 
 // Initialize the Google Drive storage watcher
-func (gd *GDriveStorageContext) Initialize(ctx context.Context) error {
+func (gd *GDriveStorageContext) Initialize(ctx context.Context, bundles []config.StorageBundle) error {
 	slog.Debug(">>GoogleDrive Initialize")
 	defer slog.Debug("<<GoogleDrive Initialize")
 
+	gd.bundles = bundles
 	gd.documents = make(chan *document.Document, 10)
 
 	gd.ctx, gd.cancelFunc = context.WithCancel(ctx)
@@ -73,7 +75,7 @@ func (gd *GDriveStorageContext) StartWatching() (chan *document.Document, error)
 	}
 
 	// Determine if we should renew the watch channel
-	err = gd.createWatchChannel()
+	err = gd.createWatchChannels()
 	if err != nil {
 		slog.Error("Failed to crate watch channel", "error", err)
 		return nil, err
@@ -97,7 +99,7 @@ func (gd *GDriveStorageContext) QueryFiles() {
 	// build the query string to find the new fines in Google Drive
 	query := gd.buildFileSearchQuery()
 
-	fileList, err := gd.driveService.Files.List().Q(query).Fields("files(id, name, mimeType, createdTime, modifiedTime)").Do()
+	fileList, err := gd.driveService.Files.List().Q(query).Fields("files(id, name, parents, mimeType, createdTime, modifiedTime)").Do()
 	if err != nil {
 		slog.Error("Failed to fetch files", "error", err)
 		return
@@ -124,6 +126,7 @@ func (gd *GDriveStorageContext) QueryFiles() {
 
 		document := document.Document{
 			ID:           file.Id,
+			FolderID:     file.Parents[0],
 			Name:         file.Name,
 			MimeType:     file.MimeType,
 			CreatedTime:  createdTime,
@@ -160,9 +163,20 @@ func (gd *GDriveStorageContext) Archive(document *document.Document) error {
 		return err
 	}
 
+	archiveFolderID := ""
+	for _, b := range gd.bundles {
+		if b.SourceFolder == document.FolderID {
+			archiveFolderID = b.ArchiveFolder
+		}
+	}
+
+	if len(archiveFolderID) == 0 {
+		return fmt.Errorf("failed to find an archive folder for document: %s in folder: %s", document.Name, document.FolderID)
+	}
+
 	previousParents := strings.Join(file.Parents, ",")
 	_, err = gd.driveService.Files.Update(document.ID, nil).
-		AddParents(gd.archiveFolderID).
+		AddParents(archiveFolderID).
 		RemoveParents(previousParents).
 		Fields("id, parents").
 		Do()
@@ -178,16 +192,6 @@ func (gd *GDriveStorageContext) readConfigurationSettings() error {
 	gd.credentialsFile = os.Getenv("GOOGLE_SERVICE_KEY_FILE")
 	if len(gd.credentialsFile) == 0 {
 		return errors.New("environment variable GOOGLE_SERVICE_KEY_FILE is not present")
-	}
-
-	gd.watchFolderID = os.Getenv("GOOGLE_WATCH_FOLDER_ID")
-	if len(gd.watchFolderID) == 0 {
-		return errors.New("environment variable GOOGLE_WATCH_FOLDER_ID is not present")
-	}
-
-	gd.archiveFolderID = os.Getenv("GOOGLE_ARCHIVE_FOLDER_ID")
-	if len(gd.watchFolderID) == 0 {
-		return errors.New("environment variable GOOGLE_ARCHIVE_FOLDER_ID is not present")
 	}
 
 	gd.webhookURL = os.Getenv("GOOGLE_WEBHOOK_URL")
@@ -246,64 +250,6 @@ func (gd *GDriveStorageContext) registerWebhook() error {
 	return nil
 }
 
-func (gd *GDriveStorageContext) createWatchChannel() error {
-	var createChannel bool
-	// read the database for the last watch channel created
-	watch, err := gd.store.GetLatestGoogleDriveWatch(gd.ctx)
-	if err == nil {
-		// we have a watch channel, see if it's still valid
-		if watch.WebhookUrl != gd.webhookURL {
-			createChannel = true
-		}
-
-		if time.Now().UnixMilli() > watch.ExpiresAt-60000 {
-			createChannel = true
-		}
-	} else {
-		// we don't have a watch channel so we need to create one
-		createChannel = true
-	}
-
-	if !createChannel {
-		slog.Debug("Use existing watch channel")
-		gd.channelID = watch.ChannelID
-		gd.expiration = watch.ExpiresAt
-
-		return nil
-	}
-
-	slog.Info("Create new watch channel")
-	gd.channelID = uuid.New().String()
-	gd.expiration = time.Now().Add(24 * time.Hour).UnixMilli()
-
-	req := &drive.Channel{
-		Id:         gd.channelID,
-		Type:       "web_hook",
-		Address:    gd.webhookURL,
-		Expiration: gd.expiration,
-	}
-
-	// Watch for changes in the folder
-	_, err = gd.driveService.Files.Watch(gd.watchFolderID, req).Do()
-	if err != nil {
-		return nil
-	}
-
-	args := database.CreateGoogleDriveWatchParams{
-		ChannelID:  gd.channelID,
-		ResourceID: gd.watchFolderID,
-		ExpiresAt:  gd.expiration,
-		WebhookUrl: gd.webhookURL,
-	}
-
-	_, err = gd.store.CreateGoogleDriveWatch(gd.ctx, args)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
 // Webhook handler for receiving Google Drive notifications
 func (gd *GDriveStorageContext) webhookHandler(w http.ResponseWriter, r *http.Request) {
 	slog.Debug(">>GoogleDrive.webhookHandler")
@@ -315,7 +261,8 @@ func (gd *GDriveStorageContext) webhookHandler(w http.ResponseWriter, r *http.Re
 	resourceID := r.Header.Get("X-Goog-Resource-ID")
 
 	// did we receive a notification for an old channel?
-	if channelID != gd.channelID {
+	if !gd.watchChannelExists(channelID) {
+		slog.Error("watch channel does not exist", "channelID", channelID)
 		gd.stopChannelWatch(channelID, resourceID)
 		return
 	}
@@ -331,20 +278,151 @@ func (gd *GDriveStorageContext) webhookHandler(w http.ResponseWriter, r *http.Re
 	gd.wg.Add(1)
 	go gd.QueryFiles()
 
-	// check if the watch channel should be renewed
-	gd.renewWatchChannelIfNeeded()
+	// TODO: this only works if we get a webhook call before the channel expires
+	gd.renewWatchChannelsIfNeeded()
 
 	w.WriteHeader(http.StatusOK)
 }
 
-func (gd *GDriveStorageContext) renewWatchChannelIfNeeded() {
-	if time.Now().UnixMilli() > gd.expiration-60000 { // Renew 1 min before expiry
-		gd.createWatchChannel() // Recreate the watch
+func (gd *GDriveStorageContext) watchChannelExists(channelID string) bool {
+	for _, v := range gd.channelWatchMap {
+		if v.ChannelID == channelID {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (gd *GDriveStorageContext) renewWatchChannelsIfNeeded() {
+	for _, v := range gd.channelWatchMap {
+		if time.Now().UnixMilli() > v.ExpiresAt-60000 { // Renew 1 min before expiry
+			gd.createWatchChannel(v) // Recreate the watch
+		}
+	}
+}
+
+func (gd *GDriveStorageContext) createWatchChannels() error {
+	slog.Debug(">>GDrive.createWatchChannels")
+	defer slog.Debug("<<GDrive.createWatchChannels")
+
+	// create a list of folder (resource) ids to query and a map of folders to watch channel information
+	resourceIds := make([]string, 0)
+	gd.channelWatchMap = make(map[string]database.GoogleDriveWatch)
+	for _, b := range gd.bundles {
+		slog.Debug("Watching folder", "resourceID", b.SourceFolder)
+		// build resource list of folders to query from the database
+		resourceIds = append(resourceIds, b.SourceFolder)
+
+		// build a map of expected watch entries
+		gd.channelWatchMap[b.SourceFolder] = database.GoogleDriveWatch{
+			ResourceID: b.SourceFolder,
+			ChannelID:  uuid.New().String(),
+			ExpiresAt:  time.Now().Add(24 * time.Hour).UnixMilli(),
+			WebhookUrl: gd.webhookURL,
+		}
+	}
+
+	// get any corresponding watch channels for the folders
+	dbWatch, err := gd.store.GetWatchEntriesByFolderIDs(gd.ctx, resourceIds)
+	if err != nil {
+		// we failed to query any of the expected resource identifiers
+		slog.Error("failed to query watch entries by folder ID", "error", err)
+		return err
+	}
+
+	// loop through the saved channels and track the ones we need to create
+	for _, w := range dbWatch {
+		gd.channelWatchMap[w.ResourceID] = w
+	}
+
+	// loop through the map of watch channels we need to maintain
+	for _, v := range gd.channelWatchMap {
+		if err = gd.createWatchChannel(v); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (gd *GDriveStorageContext) createWatchChannel(wc database.GoogleDriveWatch) error {
+	if wc.ID != uuid.Nil {
+		// consider it expired if it's been alive over 23 hours
+		expired := time.Now().UnixMilli() > wc.ExpiresAt-60000
+		if wc.WebhookUrl == gd.webhookURL && !expired {
+			// we don't need to create a new channel as it current exists for the correct web hook and it's not expired
+			slog.Debug("current channel is valid", "resourceID", wc.ResourceID, "channelID", wc.ChannelID)
+			return nil
+		} else {
+			wc.ChannelID = uuid.New().String()
+			wc.ExpiresAt = time.Now().Add(24 * time.Hour).UnixMilli()
+		}
+	}
+
+	slog.Debug("createWatchChannel", "resourceID", wc.ResourceID, "channelID", wc.ChannelID)
+	req := &drive.Channel{
+		Id:         wc.ChannelID,
+		Type:       "web_hook",
+		Address:    wc.WebhookUrl,
+		Expiration: wc.ExpiresAt,
+	}
+
+	// Watch for changes in the folder
+	_, err := gd.driveService.Files.Watch(wc.ResourceID, req).Do()
+	if err != nil {
+		slog.Error("Failed to watch folder", "resourceID", wc.ResourceID, "error", err)
+		return nil
+	}
+
+	dbc, err := gd.createOrUpdateChannel(wc)
+	if err != nil {
+		return err
+	}
+
+	gd.channelWatchMap[wc.ResourceID] = dbc
+
+	return nil
+}
+
+func (gd *GDriveStorageContext) createOrUpdateChannel(wc database.GoogleDriveWatch) (database.GoogleDriveWatch, error) {
+	// if we don't have a database id then we need to create the channel
+	if wc.ID == uuid.Nil {
+		args := database.CreateGoogleDriveWatchParams{
+			ChannelID:  wc.ChannelID,
+			ResourceID: wc.ResourceID,
+			ExpiresAt:  wc.ExpiresAt,
+			WebhookUrl: wc.WebhookUrl,
+		}
+
+		return gd.store.CreateGoogleDriveWatch(gd.ctx, args)
+	} else {
+		// we're updating an existing channel
+		args := database.UpdateGoogleDriveWatchParams{
+			ID:         wc.ID,
+			ChannelID:  wc.ChannelID,
+			ResourceID: wc.ResourceID,
+			ExpiresAt:  wc.ExpiresAt,
+			WebhookUrl: wc.WebhookUrl,
+		}
+
+		return gd.store.UpdateGoogleDriveWatch(gd.ctx, args)
 	}
 }
 
 func (gd *GDriveStorageContext) buildFileSearchQuery() string {
-	query := fmt.Sprintf("mimeType='application/pdf' and '%s' in parents", gd.watchFolderID)
+	query := "mimeType='application/pdf' and ("
+
+	index := 0
+	for k := range gd.channelWatchMap {
+		if index != 0 {
+			query = query + " or "
+		}
+		query = fmt.Sprintf("%s'%s' in parents", query, k)
+		index++
+	}
+
+	query = query + ")"
 
 	return query
 }

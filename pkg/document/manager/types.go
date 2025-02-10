@@ -4,6 +4,7 @@ import (
 	"context"
 	"sync"
 
+	"github.com/KyleBrandon/scriptoria/internal/config"
 	"github.com/KyleBrandon/scriptoria/internal/database"
 	"github.com/KyleBrandon/scriptoria/pkg/document"
 	"github.com/KyleBrandon/scriptoria/pkg/document/processor"
@@ -25,8 +26,8 @@ type (
 		ctx             context.Context
 		cancelCauseFunc context.CancelCauseFunc
 		wg              *sync.WaitGroup
+		config          config.Config
 		store           DocumentManagerStore
-		sourceType      string
 		srcStorage      document.Storage
 		processors      []*processor.ProcessorContext
 		inputCh         chan *document.TransformContext

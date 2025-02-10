@@ -26,12 +26,15 @@ go.work.sum
 
 # config file
 config.json
+config.json.bak
 
 
 download/*
 markdown/*
 bin/*
+work/*
 
 goose-*.sh
+start-ngrok.sh
 
 .DS_Store

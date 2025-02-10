@@ -6,14 +6,20 @@ RETURNING *;
 
 -- name: UpdateDocumentDestination :one
 UPDATE documents
-SET destination_store = $2, destination_id = $3, destination_name = $4, transferred_at = $5
+SET destination_store = $2, 
+    destination_id = $3, 
+    destination_name = $4, 
+    transferred_at = $5,
+    updated_at = CURRENT_TIMESTAMP
 WHERE id = $1
 RETURNING *;
 
 
 -- name: UpdateDocumentProcessed :one
 UPDATE documents
-SET processed_at = $2, processing_status = $3
+SET processed_at = $2, 
+processing_status = $3,
+    updated_at = CURRENT_TIMESTAMP
 WHERE id = $1
 RETURNING *;
 

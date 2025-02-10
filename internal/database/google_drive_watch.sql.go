@@ -7,6 +7,9 @@ package database
 
 import (
 	"context"
+
+	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 const createGoogleDriveWatch = `-- name: CreateGoogleDriveWatch :one
@@ -51,6 +54,84 @@ LIMIT 1
 
 func (q *Queries) GetLatestGoogleDriveWatch(ctx context.Context) (GoogleDriveWatch, error) {
 	row := q.db.QueryRowContext(ctx, getLatestGoogleDriveWatch)
+	var i GoogleDriveWatch
+	err := row.Scan(
+		&i.ID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ChannelID,
+		&i.ResourceID,
+		&i.ExpiresAt,
+		&i.WebhookUrl,
+	)
+	return i, err
+}
+
+const getWatchEntriesByFolderIDs = `-- name: GetWatchEntriesByFolderIDs :many
+SELECT DISTINCT ON (resource_id) id, created_at, updated_at, channel_id, resource_id, expires_at, webhook_url
+FROM google_drive_watch
+WHERE resource_id = ANY($1::text[])
+ORDER BY resource_id, created_at DESC
+`
+
+func (q *Queries) GetWatchEntriesByFolderIDs(ctx context.Context, resourceIds []string) ([]GoogleDriveWatch, error) {
+	rows, err := q.db.QueryContext(ctx, getWatchEntriesByFolderIDs, pq.Array(resourceIds))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []GoogleDriveWatch
+	for rows.Next() {
+		var i GoogleDriveWatch
+		if err := rows.Scan(
+			&i.ID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ChannelID,
+			&i.ResourceID,
+			&i.ExpiresAt,
+			&i.WebhookUrl,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const updateGoogleDriveWatch = `-- name: UpdateGoogleDriveWatch :one
+UPDATE google_drive_watch
+SET channel_id = $2,
+    resource_id = $3,
+    expires_at = $4,
+    webhook_url = $5,
+    updated_at = CURRENT_TIMESTAMP
+WHERE id = $1
+RETURNING id, created_at, updated_at, channel_id, resource_id, expires_at, webhook_url
+`
+
+type UpdateGoogleDriveWatchParams struct {
+	ID         uuid.UUID
+	ChannelID  string
+	ResourceID string
+	ExpiresAt  int64
+	WebhookUrl string
+}
+
+func (q *Queries) UpdateGoogleDriveWatch(ctx context.Context, arg UpdateGoogleDriveWatchParams) (GoogleDriveWatch, error) {
+	row := q.db.QueryRowContext(ctx, updateGoogleDriveWatch,
+		arg.ID,
+		arg.ChannelID,
+		arg.ResourceID,
+		arg.ExpiresAt,
+		arg.WebhookUrl,
+	)
 	var i GoogleDriveWatch
 	err := row.Scan(
 		&i.ID,

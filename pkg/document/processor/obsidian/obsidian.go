@@ -5,6 +5,8 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+
+	"github.com/KyleBrandon/scriptoria/pkg/document"
 )
 
 // NewObsidianProcessor will return a processor that will add a link to the Markdown file to the original PDF attachment.
@@ -22,9 +24,11 @@ func (op *ObsidianDocumentPostProcessor) Initialize(tempStoragePath string) erro
 	return nil
 }
 
-func (op *ObsidianDocumentPostProcessor) Process(sourceName string, reader io.ReadCloser) (io.ReadCloser, error) {
+func (op *ObsidianDocumentPostProcessor) Process(document *document.Document, reader io.ReadCloser) (io.ReadCloser, error) {
 	slog.Debug(">>Obsidian.Process")
 	defer slog.Debug("<<Obsidian.Process")
+
+	sourceName := document.Name
 
 	// save the markdown note to the notes folder in Obsidian
 	markdown, err := op.saveMarkdownNote(sourceName, reader)
