@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/KyleBrandon/scriptoria/internal/config"
 	"github.com/KyleBrandon/scriptoria/pkg/document"
 	"github.com/sashabaranov/go-openai"
 )
@@ -20,7 +21,7 @@ func NewChatGPTProcessor() *ChatgptDocumentProcessor {
 	return cp
 }
 
-func (cp *ChatgptDocumentProcessor) Initialize(tempStoragePath string) error {
+func (cp *ChatgptDocumentProcessor) Initialize(tempStoragePath string, bundles []config.StorageBundle) error {
 	err := cp.readConfigurationSettings()
 	if err != nil {
 		slog.Error("Failed to read the configuration settings for ChatGPT", "error", err)
@@ -76,7 +77,6 @@ func (cp *ChatgptDocumentProcessor) Process(document *document.Document, reader 
 	// Get the cleaned-up text
 	buffer := resp.Choices[0].Message.Content
 
-	// TODO:
 	// For some reason ChatGPT will occasionally surround the entire processed output with
 	// a Markdown code block. Check to see if the document is surrounded in a code block.
 	// If so, remove it.

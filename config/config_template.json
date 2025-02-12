@@ -1,7 +1,18 @@
 {
-  "source_store": "Google Drive",
-  "dest_store": "Local",
-  "attachments_location": "<file path to where the original PDF image should be copied>",
-  "notes_location": "<file path where the markdown note should be copied>",
-  "local_storage_path": "<file path to temp local storage>"
+    "temp_storage_folder": "<temp folder for documents>",
+    "source_store": "Google Drive",
+    "bundles": [
+        {
+            "source_folder": "<Google Drive folder ID>",
+            "archive_folder": "<Google Drive folder ID>",
+            "dest_attachments_folder": "<local folder to copy original PDF to>",
+            "dest_notes_folder": "<local folder to copy markdown file to>"
+        },
+        {
+            "source_folder": "<Google Drive folder ID>",
+            "archive_folder": "<Google Drive folder ID>",
+            "dest_attachments_folder": "<local folder to copy original PDF to>",
+            "dest_notes_folder": "<local folder to copy markdown file to>"
+        }
+    ]
 }

@@ -21,16 +21,15 @@ type BundleProcessor struct {
 }
 
 // NewBundleProcessor will return a processor that will bundle the Markdown document and PDF attachment into the specific folder locations.
-func NewBundleProcessor(bundles []config.StorageBundle) *BundleProcessor {
+func NewBundleProcessor() *BundleProcessor {
 	bp := &BundleProcessor{}
-
-	bp.bundles = bundles
 
 	return bp
 }
 
-func (bp *BundleProcessor) Initialize(tempStoragePath string) error {
+func (bp *BundleProcessor) Initialize(tempStoragePath string, bundles []config.StorageBundle) error {
 	bp.tempStoragePath = tempStoragePath
+	bp.bundles = bundles
 	return nil
 }
 

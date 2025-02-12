@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/KyleBrandon/scriptoria/internal/config"
 	"github.com/KyleBrandon/scriptoria/pkg/document"
 )
 
@@ -25,7 +26,7 @@ func NewMathpixProcessor() *MathpixDocumentProcessor {
 	return mp
 }
 
-func (mp *MathpixDocumentProcessor) Initialize(tempStoragePath string) error {
+func (mp *MathpixDocumentProcessor) Initialize(tempStoragePath string, bundles []config.StorageBundle) error {
 	mp.tempStoragePath = tempStoragePath
 
 	err := mp.readConfigurationSettings()

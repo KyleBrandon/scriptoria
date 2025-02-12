@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/KyleBrandon/scriptoria/internal/config"
 	"github.com/KyleBrandon/scriptoria/pkg/document"
 )
 
@@ -16,7 +17,7 @@ func NewObsidianProcessor() *ObsidianDocumentPostProcessor {
 	return &op
 }
 
-func (op *ObsidianDocumentPostProcessor) Initialize(tempStoragePath string) error {
+func (op *ObsidianDocumentPostProcessor) Initialize(tempStoragePath string, bundles []config.StorageBundle) error {
 	slog.Debug(">>ObsidianDocumentPostProcessor.Initialize")
 	defer slog.Debug("<<ObsidianDocumentPostProcessor.Initialize")
 	op.tempStoragePath = tempStoragePath

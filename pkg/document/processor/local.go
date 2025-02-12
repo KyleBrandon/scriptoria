@@ -6,10 +6,9 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/KyleBrandon/scriptoria/internal/config"
 	"github.com/KyleBrandon/scriptoria/pkg/document"
 )
-
-type documentStore interface{}
 
 type LocalDocumentProcessor struct {
 	destinationPath string
@@ -22,7 +21,7 @@ func NewTempStorageProcessor() *LocalDocumentProcessor {
 	return lp
 }
 
-func (lp *LocalDocumentProcessor) Initialize(tempStoragePath string) error {
+func (lp *LocalDocumentProcessor) Initialize(tempStoragePath string, bundles []config.StorageBundle) error {
 	lp.destinationPath = tempStoragePath
 	return nil
 }

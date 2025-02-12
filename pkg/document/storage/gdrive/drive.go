@@ -81,6 +81,9 @@ func (gd *GDriveStorageContext) StartWatching() (chan *document.Document, error)
 		return nil, err
 	}
 
+	// schedule a timer to renew the watch channels
+	gd.scheduleChannelRenewal()
+
 	// Do an initial query of the files that are in the folder
 	gd.wg.Add(1)
 	go gd.QueryFiles()
@@ -278,9 +281,6 @@ func (gd *GDriveStorageContext) webhookHandler(w http.ResponseWriter, r *http.Re
 	gd.wg.Add(1)
 	go gd.QueryFiles()
 
-	// TODO: this only works if we get a webhook call before the channel expires
-	gd.renewWatchChannelsIfNeeded()
-
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -294,12 +294,13 @@ func (gd *GDriveStorageContext) watchChannelExists(channelID string) bool {
 	return false
 }
 
-func (gd *GDriveStorageContext) renewWatchChannelsIfNeeded() {
-	for _, v := range gd.channelWatchMap {
-		if time.Now().UnixMilli() > v.ExpiresAt-60000 { // Renew 1 min before expiry
-			gd.createWatchChannel(v) // Recreate the watch
+func (gd *GDriveStorageContext) scheduleChannelRenewal() {
+	time.AfterFunc(30*time.Minute, func() {
+		err := gd.createWatchChannels()
+		if err != nil {
+			slog.Error("scheduleChannelRenewal failed", "error", err)
 		}
-	}
+	})
 }
 
 func (gd *GDriveStorageContext) createWatchChannels() error {
@@ -314,7 +315,7 @@ func (gd *GDriveStorageContext) createWatchChannels() error {
 		// build resource list of folders to query from the database
 		resourceIds = append(resourceIds, b.SourceFolder)
 
-		// build a map of expected watch entries
+		// build a map of expected watch entries with initial values
 		gd.channelWatchMap[b.SourceFolder] = database.GoogleDriveWatch{
 			ResourceID: b.SourceFolder,
 			ChannelID:  uuid.New().String(),
@@ -331,7 +332,7 @@ func (gd *GDriveStorageContext) createWatchChannels() error {
 		return err
 	}
 
-	// loop through the saved channels and track the ones we need to create
+	// loop through the previously configured channels and update the default map with their current settings
 	for _, w := range dbWatch {
 		gd.channelWatchMap[w.ResourceID] = w
 	}
@@ -347,6 +348,7 @@ func (gd *GDriveStorageContext) createWatchChannels() error {
 }
 
 func (gd *GDriveStorageContext) createWatchChannel(wc database.GoogleDriveWatch) error {
+	// for entries that were previously configured, determine if we need to re-create the channel
 	if wc.ID != uuid.Nil {
 		// consider it expired if it's been alive over 23 hours
 		expired := time.Now().UnixMilli() > wc.ExpiresAt-60000
@@ -355,8 +357,10 @@ func (gd *GDriveStorageContext) createWatchChannel(wc database.GoogleDriveWatch)
 			slog.Debug("current channel is valid", "resourceID", wc.ResourceID, "channelID", wc.ChannelID)
 			return nil
 		} else {
+			// the channel either expired or has a stale webhook URL
 			wc.ChannelID = uuid.New().String()
 			wc.ExpiresAt = time.Now().Add(24 * time.Hour).UnixMilli()
+			wc.WebhookUrl = gd.webhookURL
 		}
 	}
 
@@ -377,9 +381,11 @@ func (gd *GDriveStorageContext) createWatchChannel(wc database.GoogleDriveWatch)
 
 	dbc, err := gd.createOrUpdateChannel(wc)
 	if err != nil {
+		slog.Error("Failed to create or update the watch channel", "resourceID", wc.ResourceID, "channelID", wc.ChannelID, "error", err)
 		return err
 	}
 
+	// save the newly created/updated watch channel in our map
 	gd.channelWatchMap[wc.ResourceID] = dbc
 
 	return nil

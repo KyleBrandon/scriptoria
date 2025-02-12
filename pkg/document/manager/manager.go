@@ -74,12 +74,12 @@ func (dm *DocumentManager) initializeProcessors(queries *database.Queries, confi
 	slog.Debug(">>DocumentManager.initializeProcessors")
 	defer slog.Debug("<<DocumentManager.initializeProcessors")
 
-	// TODO: build this from a config
 	cfg := processor.ProcessorConfig{
 		Ctx:               dm.ctx,
 		CancelCauseFunc:   dm.cancelCauseFunc,
 		Store:             queries,
 		TempStorageFolder: config.TempStorageFolder,
+		Bundles:           config.Bundles,
 	}
 
 	dm.processors = make([]*processor.ProcessorContext, 0)
@@ -87,7 +87,7 @@ func (dm *DocumentManager) initializeProcessors(queries *database.Queries, confi
 	dm.processors = append(dm.processors, processor.New(cfg, mathpix.NewMathpixProcessor()))
 	dm.processors = append(dm.processors, processor.New(cfg, chatgpt.NewChatGPTProcessor()))
 	dm.processors = append(dm.processors, processor.New(cfg, obsidian.NewObsidianProcessor()))
-	dm.processors = append(dm.processors, processor.New(cfg, processor.NewBundleProcessor(config.Bundles)))
+	dm.processors = append(dm.processors, processor.New(cfg, processor.NewBundleProcessor()))
 
 	dm.inputCh = make(chan *document.TransformContext)
 	inputCh := dm.inputCh
@@ -191,7 +191,7 @@ func (dm *DocumentManager) processDocument(srcDoc *document.Document, srcStorage
 		t.Reader.Close()
 	}
 
-	// TODO: Archive file in the source storage
+	// archive the file now that we're done processing it
 	srcStorage.Archive(srcDoc)
 
 	slog.Info("Finished processing the document", "sourceName", t.Doc.Name)

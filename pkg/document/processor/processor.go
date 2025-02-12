@@ -8,6 +8,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/KyleBrandon/scriptoria/internal/config"
 	"github.com/KyleBrandon/scriptoria/pkg/document"
 )
 
@@ -18,6 +19,7 @@ type ProcessorConfig struct {
 	TempStorageFolder string
 	AttachmentsFolder string
 	NotesFolder       string
+	Bundles           []config.StorageBundle
 }
 
 // Processor is an interface to define the processing of a document.  Implementations
@@ -26,7 +28,7 @@ type ProcessorConfig struct {
 //	enter and leave the processor.
 type Processor interface {
 	// Initialize the processor
-	Initialize(tempStoragePath string) error
+	Initialize(tempStoragePath string, bundles []config.StorageBundle) error
 
 	// Process the document passed in the reader and return another reader with the new transformed document.
 	Process(document *document.Document, reader io.ReadCloser) (io.ReadCloser, error)
@@ -38,8 +40,7 @@ type ProcessorContext struct {
 	store           ProcessorStore
 
 	tempStoragePath string
-	attachmentsPath string
-	notesPath       string
+	bundles         []config.StorageBundle
 
 	wg        *sync.WaitGroup
 	processor Processor
@@ -51,16 +52,15 @@ type ProcessorStore interface {
 	//
 }
 
-func New(config ProcessorConfig, processor Processor) *ProcessorContext {
+func New(cfg ProcessorConfig, processor Processor) *ProcessorContext {
 	slog.Debug(">>ProcessorContext.New")
 	defer slog.Debug("<<ProcessorContext.New")
 	pc := &ProcessorContext{
-		ctx:             config.Ctx,
-		cancelCauseFunc: config.CancelCauseFunc,
-		store:           config.Store,
-		tempStoragePath: config.TempStorageFolder,
-		attachmentsPath: config.AttachmentsFolder,
-		notesPath:       config.NotesFolder,
+		ctx:             cfg.Ctx,
+		cancelCauseFunc: cfg.CancelCauseFunc,
+		store:           cfg.Store,
+		tempStoragePath: cfg.TempStorageFolder,
+		bundles:         cfg.Bundles,
 		processor:       processor,
 		wg:              &sync.WaitGroup{},
 		outputCh:        make(chan *document.TransformContext),
@@ -73,7 +73,7 @@ func (pc *ProcessorContext) Initialize(inputCh chan *document.TransformContext) 
 	slog.Debug(">>ProcessorContext.Initialize")
 	defer slog.Debug("<<ProcessorContext.Initialize")
 
-	err := pc.processor.Initialize(pc.tempStoragePath)
+	err := pc.processor.Initialize(pc.tempStoragePath, pc.bundles)
 	if err != nil {
 		return nil, err
 	}
