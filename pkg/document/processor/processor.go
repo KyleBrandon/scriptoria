@@ -2,13 +2,16 @@ package processor
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/KyleBrandon/scriptoria/internal/config"
+	"github.com/KyleBrandon/scriptoria/internal/database"
 	"github.com/KyleBrandon/scriptoria/pkg/document"
 )
 
@@ -32,6 +35,9 @@ type Processor interface {
 
 	// Process the document passed in the reader and return another reader with the new transformed document.
 	Process(document *document.Document, reader io.ReadCloser) (io.ReadCloser, error)
+
+	// Name of the Processor
+	GetName() string
 }
 
 type ProcessorContext struct {
@@ -49,7 +55,7 @@ type ProcessorContext struct {
 }
 
 type ProcessorStore interface {
-	//
+	UpdateDocumentProcessed(ctx context.Context, arg database.UpdateDocumentProcessedParams) (database.Document, error)
 }
 
 func New(cfg ProcessorConfig, processor Processor) *ProcessorContext {
@@ -113,15 +119,36 @@ func (pc *ProcessorContext) processWrapper(t *document.TransformContext) {
 	defer pc.wg.Done()
 	defer t.Reader.Close()
 
-	reader, err := pc.processor.Process(t.Doc, t.Reader)
+	pc.updateDocumentProcessingStatus(t, "start processing")
+
+	reader, err := pc.processor.Process(t.SourceDocument, t.Reader)
 	if err != nil {
 		pc.cancelCauseFunc(err)
+		pc.updateDocumentProcessingStatus(t, err.Error())
 		return
 	}
+
+	pc.updateDocumentProcessingStatus(t, "finished processing")
 
 	// continue to the next processor
 	t.Reader = reader
 	pc.outputCh <- t
+}
+
+func (pc *ProcessorContext) updateDocumentProcessingStatus(tc *document.TransformContext, message string) {
+	processorName := pc.processor.GetName()
+	statusMessage := fmt.Sprintf("%s: %s", processorName, message)
+
+	args := database.UpdateDocumentProcessedParams{
+		ID:               tc.DocumentID,
+		ProcessedAt:      sql.NullTime{Time: time.Now().UTC(), Valid: true},
+		ProcessingStatus: sql.NullString{String: statusMessage, Valid: true},
+	}
+
+	_, err := pc.store.UpdateDocumentProcessed(pc.ctx, args)
+	if err != nil {
+		slog.Error("Failed to update the document status in the database", "error", err)
+	}
 }
 
 func CopyFileFromReader(fullFilePath string, reader io.ReadCloser) error {

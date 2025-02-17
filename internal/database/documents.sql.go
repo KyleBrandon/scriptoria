@@ -16,7 +16,7 @@ const createDocument = `-- name: CreateDocument :one
 INSERT INTO documents (
     source_store, source_id, source_name
 ) VALUES ( $1, $2, $3)
-RETURNING id, created_at, updated_at, source_store, source_id, source_name, destination_store, destination_id, destination_name, transferred_at, processed_at, processing_status
+RETURNING id, created_at, updated_at, source_store, source_id, source_name, processed_at, processing_status
 `
 
 type CreateDocumentParams struct {
@@ -35,10 +35,6 @@ func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) 
 		&i.SourceStore,
 		&i.SourceID,
 		&i.SourceName,
-		&i.DestinationStore,
-		&i.DestinationID,
-		&i.DestinationName,
-		&i.TransferredAt,
 		&i.ProcessedAt,
 		&i.ProcessingStatus,
 	)
@@ -46,7 +42,7 @@ func (q *Queries) CreateDocument(ctx context.Context, arg CreateDocumentParams) 
 }
 
 const findDocumentBySourceId = `-- name: FindDocumentBySourceId :one
-SELECT id, created_at, updated_at, source_store, source_id, source_name, destination_store, destination_id, destination_name, transferred_at, processed_at, processing_status FROM documents
+SELECT id, created_at, updated_at, source_store, source_id, source_name, processed_at, processing_status FROM documents
 WHERE source_id = $1
 `
 
@@ -60,10 +56,6 @@ func (q *Queries) FindDocumentBySourceId(ctx context.Context, sourceID string) (
 		&i.SourceStore,
 		&i.SourceID,
 		&i.SourceName,
-		&i.DestinationStore,
-		&i.DestinationID,
-		&i.DestinationName,
-		&i.TransferredAt,
 		&i.ProcessedAt,
 		&i.ProcessingStatus,
 	)
@@ -71,7 +63,7 @@ func (q *Queries) FindDocumentBySourceId(ctx context.Context, sourceID string) (
 }
 
 const getDocumentById = `-- name: GetDocumentById :one
-SELECT id, created_at, updated_at, source_store, source_id, source_name, destination_store, destination_id, destination_name, transferred_at, processed_at, processing_status FROM documents
+SELECT id, created_at, updated_at, source_store, source_id, source_name, processed_at, processing_status FROM documents
 WHERE id = $1
 `
 
@@ -85,55 +77,6 @@ func (q *Queries) GetDocumentById(ctx context.Context, id uuid.UUID) (Document, 
 		&i.SourceStore,
 		&i.SourceID,
 		&i.SourceName,
-		&i.DestinationStore,
-		&i.DestinationID,
-		&i.DestinationName,
-		&i.TransferredAt,
-		&i.ProcessedAt,
-		&i.ProcessingStatus,
-	)
-	return i, err
-}
-
-const updateDocumentDestination = `-- name: UpdateDocumentDestination :one
-UPDATE documents
-SET destination_store = $2, 
-    destination_id = $3, 
-    destination_name = $4, 
-    transferred_at = $5,
-    updated_at = CURRENT_TIMESTAMP
-WHERE id = $1
-RETURNING id, created_at, updated_at, source_store, source_id, source_name, destination_store, destination_id, destination_name, transferred_at, processed_at, processing_status
-`
-
-type UpdateDocumentDestinationParams struct {
-	ID               uuid.UUID
-	DestinationStore sql.NullString
-	DestinationID    sql.NullString
-	DestinationName  sql.NullString
-	TransferredAt    sql.NullTime
-}
-
-func (q *Queries) UpdateDocumentDestination(ctx context.Context, arg UpdateDocumentDestinationParams) (Document, error) {
-	row := q.db.QueryRowContext(ctx, updateDocumentDestination,
-		arg.ID,
-		arg.DestinationStore,
-		arg.DestinationID,
-		arg.DestinationName,
-		arg.TransferredAt,
-	)
-	var i Document
-	err := row.Scan(
-		&i.ID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.SourceStore,
-		&i.SourceID,
-		&i.SourceName,
-		&i.DestinationStore,
-		&i.DestinationID,
-		&i.DestinationName,
-		&i.TransferredAt,
 		&i.ProcessedAt,
 		&i.ProcessingStatus,
 	)
@@ -143,10 +86,10 @@ func (q *Queries) UpdateDocumentDestination(ctx context.Context, arg UpdateDocum
 const updateDocumentProcessed = `-- name: UpdateDocumentProcessed :one
 UPDATE documents
 SET processed_at = $2, 
-processing_status = $3,
+    processing_status = $3,
     updated_at = CURRENT_TIMESTAMP
 WHERE id = $1
-RETURNING id, created_at, updated_at, source_store, source_id, source_name, destination_store, destination_id, destination_name, transferred_at, processed_at, processing_status
+RETURNING id, created_at, updated_at, source_store, source_id, source_name, processed_at, processing_status
 `
 
 type UpdateDocumentProcessedParams struct {
@@ -165,10 +108,6 @@ func (q *Queries) UpdateDocumentProcessed(ctx context.Context, arg UpdateDocumen
 		&i.SourceStore,
 		&i.SourceID,
 		&i.SourceName,
-		&i.DestinationStore,
-		&i.DestinationID,
-		&i.DestinationName,
-		&i.TransferredAt,
 		&i.ProcessedAt,
 		&i.ProcessingStatus,
 	)

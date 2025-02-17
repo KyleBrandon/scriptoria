@@ -102,7 +102,7 @@ func (gd *GDriveStorageContext) QueryFiles() {
 	// build the query string to find the new fines in Google Drive
 	query := gd.buildFileSearchQuery()
 
-	fileList, err := gd.driveService.Files.List().Q(query).Fields("files(id, name, parents, mimeType, createdTime, modifiedTime)").Do()
+	fileList, err := gd.driveService.Files.List().Q(query).Fields("files(id, name, parents, createdTime, modifiedTime)").Do()
 	if err != nil {
 		slog.Error("Failed to fetch files", "error", err)
 		return
@@ -128,12 +128,11 @@ func (gd *GDriveStorageContext) QueryFiles() {
 		}
 
 		document := document.Document{
-			ID:           file.Id,
-			FolderID:     file.Parents[0],
-			Name:         file.Name,
-			MimeType:     file.MimeType,
-			CreatedTime:  createdTime,
-			ModifiedTime: modifiedTime,
+			StorageDocumentID: file.Id,
+			StorageFolderID:   file.Parents[0],
+			Name:              file.Name,
+			CreatedTime:       createdTime,
+			ModifiedTime:      modifiedTime,
 		}
 
 		gd.documents <- &document
@@ -149,7 +148,7 @@ func (gd *GDriveStorageContext) Write(srcDoc *document.Document, reader io.ReadC
 // Get a io.Reader for the document
 func (gd *GDriveStorageContext) GetReader(document *document.Document) (io.ReadCloser, error) {
 	// Get the file data
-	resp, err := gd.driveService.Files.Get(document.ID).Download()
+	resp, err := gd.driveService.Files.Get(document.StorageDocumentID).Download()
 	if err != nil {
 		slog.Error("Unable to get the file reader", "error", err)
 		return nil, err
@@ -161,24 +160,24 @@ func (gd *GDriveStorageContext) GetReader(document *document.Document) (io.ReadC
 
 func (gd *GDriveStorageContext) Archive(document *document.Document) error {
 	// move the document to the archive folder
-	file, err := gd.driveService.Files.Get(document.ID).Fields("parents").Do()
+	file, err := gd.driveService.Files.Get(document.StorageDocumentID).Fields("parents").Do()
 	if err != nil {
 		return err
 	}
 
 	archiveFolderID := ""
 	for _, b := range gd.bundles {
-		if b.SourceFolder == document.FolderID {
+		if b.SourceFolder == document.StorageFolderID {
 			archiveFolderID = b.ArchiveFolder
 		}
 	}
 
 	if len(archiveFolderID) == 0 {
-		return fmt.Errorf("failed to find an archive folder for document: %s in folder: %s", document.Name, document.FolderID)
+		return fmt.Errorf("failed to find an archive folder for document: %s in folder: %s", document.Name, document.StorageFolderID)
 	}
 
 	previousParents := strings.Join(file.Parents, ",")
-	_, err = gd.driveService.Files.Update(document.ID, nil).
+	_, err = gd.driveService.Files.Update(document.StorageDocumentID, nil).
 		AddParents(archiveFolderID).
 		RemoveParents(previousParents).
 		Fields("id, parents").

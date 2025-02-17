@@ -26,6 +26,10 @@ func NewMathpixProcessor() *MathpixDocumentProcessor {
 	return mp
 }
 
+func (lp *MathpixDocumentProcessor) GetName() string {
+	return "Mathpix Document Processor"
+}
+
 func (mp *MathpixDocumentProcessor) Initialize(tempStoragePath string, bundles []config.StorageBundle) error {
 	mp.tempStoragePath = tempStoragePath
 

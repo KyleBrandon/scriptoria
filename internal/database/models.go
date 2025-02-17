@@ -18,10 +18,6 @@ type Document struct {
 	SourceStore      string
 	SourceID         string
 	SourceName       string
-	DestinationStore sql.NullString
-	DestinationID    sql.NullString
-	DestinationName  sql.NullString
-	TransferredAt    sql.NullTime
 	ProcessedAt      sql.NullTime
 	ProcessingStatus sql.NullString
 }

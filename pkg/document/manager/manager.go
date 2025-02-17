@@ -2,9 +2,11 @@ package manager
 
 import (
 	"context"
+	"database/sql"
 	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/KyleBrandon/scriptoria/internal/config"
 	"github.com/KyleBrandon/scriptoria/internal/database"
@@ -14,6 +16,7 @@ import (
 	"github.com/KyleBrandon/scriptoria/pkg/document/processor/mathpix"
 	"github.com/KyleBrandon/scriptoria/pkg/document/processor/obsidian"
 	"github.com/KyleBrandon/scriptoria/pkg/document/storage"
+	"github.com/google/uuid"
 )
 
 func New(ctx context.Context, queries *database.Queries, config config.Config, mux *http.ServeMux) (*DocumentManager, error) {
@@ -165,7 +168,7 @@ func (dm *DocumentManager) processDocument(srcDoc *document.Document, srcStorage
 	defer dm.wg.Done()
 
 	// check if we've processed this document and create it's state in the database
-	err := dm.createNewDocument(srcDoc)
+	dbDoc, err := dm.initializeDocument(srcDoc)
 	if err != nil {
 		return
 	}
@@ -179,8 +182,9 @@ func (dm *DocumentManager) processDocument(srcDoc *document.Document, srcStorage
 
 	// Send the document transform context to the input channel (first processor)
 	dm.inputCh <- &document.TransformContext{
-		Doc:    srcDoc,
-		Reader: inputReader,
+		DocumentID:     dbDoc.ID,
+		SourceDocument: srcDoc,
+		Reader:         inputReader,
 	}
 
 	// wait on output channel
@@ -194,30 +198,53 @@ func (dm *DocumentManager) processDocument(srcDoc *document.Document, srcStorage
 	// archive the file now that we're done processing it
 	srcStorage.Archive(srcDoc)
 
-	slog.Info("Finished processing the document", "sourceName", t.Doc.Name)
+	err = dm.updateDocumentProcessingStatus(dbDoc.ID, "Processing Complete")
+	if err != nil {
+		return
+	}
+
+	slog.Info("Finished processing document", "sourceName", t.SourceDocument.Name)
 }
 
-func (dm *DocumentManager) createNewDocument(srcDoc *document.Document) error {
+func (dm *DocumentManager) initializeDocument(srcDoc *document.Document) (*database.Document, error) {
 	slog.Debug(">>DocumentManager.createNewDocument")
 	defer slog.Debug("<<DocumentManager.createNewDocument")
 
 	// check if we've processed this file before
-	dbDoc, err := dm.store.FindDocumentBySourceId(dm.ctx, srcDoc.ID)
+	dbDoc, err := dm.store.FindDocumentBySourceId(dm.ctx, srcDoc.StorageDocumentID)
 	if err == nil {
 		// assume we've processed this or it's in process
 		slog.Warn("Document exists", "id", dbDoc.ID, "sourceID", dbDoc.SourceID, "name", dbDoc.SourceName)
-		return err
+		return nil, err
 	}
 
 	// mark the file as having been processed
 	arg := database.CreateDocumentParams{
 		SourceStore: dm.config.SourceStore,
-		SourceID:    srcDoc.ID,
+		SourceID:    srcDoc.StorageDocumentID,
 		SourceName:  srcDoc.Name,
 	}
-	_, err = dm.store.CreateDocument(dm.ctx, arg)
+	dbDoc, err = dm.store.CreateDocument(dm.ctx, arg)
 	if err != nil {
 		slog.Error("Failed to update the document proccessing status", "id", dbDoc.ID, "error", err)
+		return nil, err
+	}
+
+	slog.Info("Start processing document", "sourceName", srcDoc.Name)
+
+	return &dbDoc, nil
+}
+
+func (dm *DocumentManager) updateDocumentProcessingStatus(id uuid.UUID, message string) error {
+	args := database.UpdateDocumentProcessedParams{
+		ID:               id,
+		ProcessedAt:      sql.NullTime{Time: time.Now().UTC(), Valid: true},
+		ProcessingStatus: sql.NullString{String: message, Valid: true},
+	}
+
+	_, err := dm.store.UpdateDocumentProcessed(dm.ctx, args)
+	if err != nil {
+		slog.Error("Failed to update the document status in the database", "error", err)
 		return err
 	}
 

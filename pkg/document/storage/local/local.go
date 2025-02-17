@@ -49,7 +49,7 @@ func (ld *LocalStorageContext) StartWatching() (chan *document.Document, error) 
 }
 
 func (ld *LocalStorageContext) GetReader(document *document.Document) (io.ReadCloser, error) {
-	file, err := os.Open(document.ID)
+	file, err := os.Open(document.StorageDocumentID)
 	if err != nil {
 		return nil, err
 	}
@@ -79,10 +79,9 @@ func (ld *LocalStorageContext) Write(srcDoc *document.Document, reader io.ReadCl
 	}
 
 	destDoc := document.Document{
-		ID:   filePath,
-		Name: srcDoc.Name,
+		StorageDocumentID: filePath,
+		Name:              srcDoc.Name,
 		// TODO: how to fix this?
-		MimeType:     "",
 		CreatedTime:  time.Now(),
 		ModifiedTime: time.Now(),
 	}

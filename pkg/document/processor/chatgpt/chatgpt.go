@@ -21,6 +21,10 @@ func NewChatGPTProcessor() *ChatgptDocumentProcessor {
 	return cp
 }
 
+func (lp *ChatgptDocumentProcessor) GetName() string {
+	return "ChatGPT Document Processor"
+}
+
 func (cp *ChatgptDocumentProcessor) Initialize(tempStoragePath string, bundles []config.StorageBundle) error {
 	err := cp.readConfigurationSettings()
 	if err != nil {

@@ -21,6 +21,10 @@ func NewTempStorageProcessor() *LocalDocumentProcessor {
 	return lp
 }
 
+func (lp *LocalDocumentProcessor) GetName() string {
+	return "Local Document Processor"
+}
+
 func (lp *LocalDocumentProcessor) Initialize(tempStoragePath string, bundles []config.StorageBundle) error {
 	lp.destinationPath = tempStoragePath
 	return nil

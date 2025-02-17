@@ -27,6 +27,10 @@ func NewBundleProcessor() *BundleProcessor {
 	return bp
 }
 
+func (lp *BundleProcessor) GetName() string {
+	return "Bundle Document Processor"
+}
+
 func (bp *BundleProcessor) Initialize(tempStoragePath string, bundles []config.StorageBundle) error {
 	bp.tempStoragePath = tempStoragePath
 	bp.bundles = bundles
@@ -100,7 +104,7 @@ func (bp *BundleProcessor) copyAttachment(document *document.Document) error {
 
 func (bp *BundleProcessor) getBundle(document *document.Document) (config.StorageBundle, error) {
 	for _, b := range bp.bundles {
-		if b.SourceFolder == document.FolderID {
+		if b.SourceFolder == document.StorageFolderID {
 			return b, nil
 		}
 	}

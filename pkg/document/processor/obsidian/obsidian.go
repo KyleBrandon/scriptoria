@@ -17,6 +17,10 @@ func NewObsidianProcessor() *ObsidianDocumentPostProcessor {
 	return &op
 }
 
+func (lp *ObsidianDocumentPostProcessor) GetName() string {
+	return "Obsidian Document Processor"
+}
+
 func (op *ObsidianDocumentPostProcessor) Initialize(tempStoragePath string, bundles []config.StorageBundle) error {
 	slog.Debug(">>ObsidianDocumentPostProcessor.Initialize")
 	defer slog.Debug("<<ObsidianDocumentPostProcessor.Initialize")
